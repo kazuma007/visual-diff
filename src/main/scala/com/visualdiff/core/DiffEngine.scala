@@ -333,8 +333,7 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * - Outline status (Type3 or outline fonts)
     */
   private def extractFontsFromPage(doc: PDDocument, pageNum: Int): Map[String, FontInfo] =
-    if pageNum >= doc.getNumberOfPages then
-      Map.empty
+    if pageNum >= doc.getNumberOfPages then Map.empty
     else
       val page = doc.getPage(pageNum)
       Option(page.getResources).map { resources =>
