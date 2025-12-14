@@ -262,7 +262,11 @@ final class DiffEngine(config: Config) extends LazyLogging:
       val oldElem = oldTexts(oldIdx)
       val newElem = newTexts(newIdx)
       val displacement = calculateDisplacement(oldElem.bbox, newElem.bbox)
-      Option.when(displacement > config.thresholdLayout) {
+      Option.when(
+        displacement > config.thresholdLayout &&
+          oldElem.text.trim.nonEmpty &&
+          newElem.text.trim.nonEmpty,
+      ) {
         LayoutDiff(oldElem.text, oldElem.bbox, newElem.bbox, displacement)
       }
     }

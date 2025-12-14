@@ -189,7 +189,15 @@ class DiffEngineSpec extends AnyFunSpec {
 
       assert(result.hasDifferences)
       assert(result.summary.layoutDiffCount > 0)
-      assert(result.pageDiffs.flatMap(_.layoutDiffs).head.displacement > 20.0)
+
+      val layoutDiffs = result.pageDiffs.flatMap(_.layoutDiffs)
+      layoutDiffs.headOption match {
+        case Some(diff) =>
+          assert(diff.displacement > 20.0)
+        case None =>
+          fail("Expected layout diffs but found none")
+      }
+      assert(layoutDiffs.map(_.text) == Seq("M", "o", "v", "i", "n", "g", "T", "e", "x", "t"))
     }
 
     it("ignores small shifts") {
