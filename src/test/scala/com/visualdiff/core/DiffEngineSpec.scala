@@ -1,0 +1,251 @@
+package com.visualdiff.core
+
+import java.awt.Color
+import java.nio.file.Files
+
+import com.visualdiff.cli.Config
+import com.visualdiff.helper.PdfTestHelpers
+import com.visualdiff.models.DiffType._
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts
+import org.scalatest.funspec.AnyFunSpec
+import org.scalatest.prop.TableDrivenPropertyChecks._
+
+class DiffEngineSpec extends AnyFunSpec {
+
+  describe("visual differences") {
+    it("detects pixel changes") {
+      val dir = Files.createTempDirectory("diff_visual_test")
+      val pdf1 = PdfTestHelpers.createPdf(dir.resolve("v1.pdf"), "Hello World", Color.WHITE)
+      val pdf2 = PdfTestHelpers.createPdf(dir.resolve("v2.pdf"), "Hello World", Color.LIGHT_GRAY)
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir, thresholdPixel = 0.0)
+      val result = DiffEngine(config).compare()
+
+      assert(result.hasDifferences)
+      assert(result.summary.visualDiffCount > 0)
+      assert(result.pageDiffs.head.visualDiff.isDefined)
+
+      result.pageDiffs.head.visualDiff match {
+        case Some(vd) => assert(vd.pixelDifferenceRatio > 0.0)
+        case None => fail("visualDiff should exist")
+      }
+    }
+
+    it("respects pixel thresholds") {
+      val dir = Files.createTempDirectory("diff_threshold_test")
+      val pdf1 = PdfTestHelpers.createPdf(dir.resolve("th1.pdf"), "Text", Color.WHITE)
+      val pdf2 = PdfTestHelpers.createPdfWithDot(dir.resolve("th2.pdf"), "Text", Color.WHITE, dotColor = Color.BLACK)
+
+      val thresholdCases = Table(
+        ("description", "threshold", "expectedCount"),
+        ("strict", 0.0, 1),
+        ("lenient", 0.5, 0),
+      )
+
+      forAll(thresholdCases) { (_, threshold, expected) =>
+        val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir, thresholdPixel = threshold)
+        assert(DiffEngine(config).compare().summary.visualDiffCount == expected)
+      }
+    }
+
+    it("generates diff images") {
+      val dir = Files.createTempDirectory("diff_image_gen_test")
+      val pdf1 = PdfTestHelpers.createPdf(dir.resolve("ig1.pdf"), "Test", Color.WHITE)
+      val pdf2 = PdfTestHelpers.createPdf(dir.resolve("ig2.pdf"), "TestT", Color.LIGHT_GRAY)
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir, thresholdPixel = 0.0)
+      val result = DiffEngine(config).compare()
+
+      val pageDiff = result.pageDiffs.head
+      assert(pageDiff.oldImagePath.isDefined)
+      assert(pageDiff.newImagePath.isDefined)
+      assert(pageDiff.diffImagePath.isDefined)
+      assert(Files.exists(dir.resolve(pageDiff.oldImagePath.get)))
+      assert(Files.exists(dir.resolve(pageDiff.newImagePath.get)))
+      assert(Files.exists(dir.resolve(pageDiff.diffImagePath.get)))
+    }
+  }
+
+  describe("text differences") {
+    it("detects content changes") {
+      val dir = Files.createTempDirectory("diff_text_test")
+      val pdf1 = PdfTestHelpers.createPdf(dir.resolve("t1.pdf"), "TestB C", Color.WHITE)
+      val pdf2 = PdfTestHelpers.createPdf(dir.resolve("t2.pdf"), "TestAB", Color.WHITE)
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir)
+      val result = DiffEngine(config).compare()
+
+      assert(result.hasDifferences)
+      assert(result.summary.textDiffCount == 3)
+
+      val diffs = result.pageDiffs.flatMap(_.textDiffs)
+      assert(diffs.filter(_.diffType == Added).flatMap(_.newText) == Seq("A"))
+      assert(diffs.filter(_.diffType == Removed).flatMap(_.oldText) == Seq(" ", "C"))
+    }
+
+    it("handles special characters and long text") {
+      val dir = Files.createTempDirectory("diff_text_edge")
+      val pdf1 = PdfTestHelpers.createPdfWithText(dir.resolve("sc1.pdf"), "Hello © 2024 — Test™")
+      val pdf2 = PdfTestHelpers.createPdfWithText(dir.resolve("lt1.pdf"), "A" * 1000)
+
+      val testCases = Table(
+        ("pdf", "config"),
+        (pdf1, Config(oldPdf = pdf1, newPdf = pdf1, outputDir = dir)),
+        (pdf2, Config(oldPdf = pdf2, newPdf = pdf2, outputDir = dir)),
+      )
+
+      forAll(testCases) { (_, config) =>
+        assert(!DiffEngine(config).compare().hasDifferences)
+      }
+    }
+  }
+
+  describe("font differences") {
+    it("detects substitution, addition, removal") {
+      val dir = Files.createTempDirectory("diff_font_test")
+      val pdf1Helvetica =
+        PdfTestHelpers.createPdfWithFont(dir.resolve("f1.pdf"), "Test", Standard14Fonts.FontName.HELVETICA)
+      val pdf2Times =
+        PdfTestHelpers.createPdfWithFont(dir.resolve("f2.pdf"), "Test", Standard14Fonts.FontName.TIMES_ROMAN)
+      val pdfMulti = PdfTestHelpers.createPdfWithMultipleFonts(
+        dir.resolve("multi.pdf"),
+        Seq(
+          ("Text", Standard14Fonts.FontName.HELVETICA),
+          ("More", Standard14Fonts.FontName.COURIER),
+        ),
+      )
+      val pdfSimple = PdfTestHelpers.createPdf(dir.resolve("simple.pdf"), "Text", Color.WHITE)
+
+      val fontCases = Table(
+        ("description", "config"),
+        (
+          "substitution",
+          Config(oldPdf = pdf1Helvetica, newPdf = pdf2Times, outputDir = dir),
+        ),
+        (
+          "addition",
+          Config(oldPdf = pdfSimple, newPdf = pdfMulti, outputDir = dir),
+        ),
+        (
+          "removal",
+          Config(oldPdf = pdfMulti, newPdf = pdfSimple, outputDir = dir),
+        ),
+      )
+
+      forAll(fontCases) { (_, config) =>
+        val result = DiffEngine(config).compare()
+        assert(result.summary.fontDiffCount > 0)
+      }
+    }
+
+    it("ignores identical fonts") {
+      val dir = Files.createTempDirectory("diff_font_identical")
+      val pdf1 = PdfTestHelpers.createPdfWithFont(dir.resolve("fi1.pdf"), "Same", Standard14Fonts.FontName.HELVETICA)
+      val pdf2 = PdfTestHelpers.createPdfWithFont(dir.resolve("fi2.pdf"), "Same", Standard14Fonts.FontName.HELVETICA)
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir)
+
+      assert(DiffEngine(config).compare().summary.fontDiffCount == 0)
+    }
+  }
+
+  describe("color differences") {
+    val colorCases = Table(
+      ("description", "oldColor", "newColor", "threshold", "expectedCount"),
+      ("below threshold", new Color(0, 0, 0), new Color(10, 10, 10), 30.0, 0),
+      ("above threshold", new Color(0, 0, 0), new Color(100, 100, 100), 30.0, 1),
+      ("max distance", new Color(255, 255, 255), new Color(0, 0, 0), 30.0, 1),
+      ("identical", Color.BLACK, Color.BLACK, 30.0, 0),
+    )
+
+    forAll(colorCases) { (desc, oldColor, newColor, threshold, expected) =>
+      it(s"handles $desc") {
+        val dir = Files.createTempDirectory(s"diff_color_$desc")
+        val pdf1 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("c1.pdf"), "Test", oldColor)
+        val pdf2 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("c2.pdf"), "Test", newColor)
+        val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir, thresholdColor = threshold)
+        val result = DiffEngine(config).compare()
+
+        assert(result.summary.colorDiffCount == expected)
+      }
+    }
+
+    it("generates color diff images") {
+      val dir = Files.createTempDirectory("diff_color_image")
+      val pdf1 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("ci1.pdf"), "Test", Color.RED)
+      val pdf2 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("ci2.pdf"), "Test", Color.BLUE)
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir, thresholdColor = 30.0)
+      val result = DiffEngine(config).compare()
+
+      val pageDiff = result.pageDiffs.head
+      assert(pageDiff.colorImagePath.isDefined)
+      assert(Files.exists(dir.resolve(pageDiff.colorImagePath.get)))
+    }
+  }
+
+  describe("layout differences") {
+    it("detects shifts") {
+      val dir = Files.createTempDirectory("diff_layout_test")
+      val pdf1 = PdfTestHelpers.createPdf(dir.resolve("l1.pdf"), "Moving Text", Color.WHITE)
+      val pdf2 = PdfTestHelpers.createPdf(dir.resolve("l2.pdf"), "Moving Text", Color.WHITE, x = 120, y = 120)
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir, thresholdLayout = 5.0)
+      val result = DiffEngine(config).compare()
+
+      assert(result.hasDifferences)
+      assert(result.summary.layoutDiffCount > 0)
+      assert(result.pageDiffs.flatMap(_.layoutDiffs).head.displacement > 20.0)
+    }
+
+    it("ignores small shifts") {
+      val dir = Files.createTempDirectory("diff_layout_threshold")
+      val pdf1 = PdfTestHelpers.createPdf(dir.resolve("lt1.pdf"), "Text", Color.WHITE)
+      val pdf2 = PdfTestHelpers.createPdf(dir.resolve("lt2.pdf"), "Text", Color.WHITE, x = 101, y = 101)
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir, thresholdLayout = 5.0)
+
+      assert(DiffEngine(config).compare().summary.layoutDiffCount == 0)
+    }
+  }
+
+  describe("multi-page and edge cases") {
+    it("handles page count differences") {
+      val dir = Files.createTempDirectory("diff_pagecount")
+      val pdf1 = PdfTestHelpers.createMultiPagePdf(dir.resolve("pc1.pdf"), Seq("Page 1", "Page 2"))
+      val pdf2 = PdfTestHelpers.createMultiPagePdf(dir.resolve("pc2.pdf"), Seq("Page 1", "Page 2", "Page 3"))
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir)
+      val result = DiffEngine(config).compare()
+
+      assert(result.summary.totalPages == 3)
+      assert(result.hasDifferences)
+
+      result.pageDiffs.find(_.pageNumber == 3) match {
+        case Some(page) =>
+          page.visualDiff match {
+            case Some(vd) => assert(vd.pixelDifferenceRatio == 1.0)
+            case None => fail("visualDiff should exist for missing page")
+          }
+        case None => fail("Page 3 should exist")
+      }
+    }
+
+    it("reports no differences for identical PDFs") {
+      val dir = Files.createTempDirectory("diff_identical")
+      val pdf = PdfTestHelpers.createPdf(dir.resolve("same.pdf"), "Exact Match", Color.WHITE)
+      val config = Config(oldPdf = pdf, newPdf = pdf, outputDir = dir)
+      val result = DiffEngine(config).compare()
+
+      assert(!result.hasDifferences)
+      assert(result.summary.visualDiffCount == 0)
+      assert(result.summary.textDiffCount == 0)
+      assert(result.summary.layoutDiffCount == 0)
+      assert(result.summary.fontDiffCount == 0)
+    }
+
+    it("handles empty PDFs") {
+      val dir = Files.createTempDirectory("diff_empty")
+      val pdf1 = PdfTestHelpers.createEmptyPdf(dir.resolve("e1.pdf"))
+      val pdf2 = PdfTestHelpers.createEmptyPdf(dir.resolve("e2.pdf"))
+      val config = Config(oldPdf = pdf1, newPdf = pdf2, outputDir = dir)
+      val result = DiffEngine(config).compare()
+
+      assert(!result.hasDifferences)
+      assert(result.summary.totalPages == 1)
+    }
+  }
+
+}
