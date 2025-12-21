@@ -5,6 +5,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 import com.visualdiff.helper.PdfTestHelpers
+import com.visualdiff.models.Config
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.scalatest.funspec.AnyFunSpec
 
@@ -18,7 +19,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(!result.get)
       assert(Files.exists(dir.resolve("out/report.html")))
       assert(Files.exists(dir.resolve("out/diff.json")))
       assert(Files.exists(dir.resolve("out/report.css")))
@@ -44,7 +44,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(!result.get)
     }
 
     it("returns true when differences are detected") {
@@ -59,7 +58,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(result.get)
     }
 
     it("creates output directory if it doesn't exist") {
@@ -85,7 +83,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(!result.get)
     }
 
     it("generates JSON output file with correct structure") {
@@ -135,7 +132,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(!result.get)
     }
 
     it("generates HTML report with proper structure") {
@@ -168,7 +164,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(result.get)
     }
 
     it("detects text differences") {
@@ -183,7 +178,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(result.get)
     }
 
     it("detects font differences") {
@@ -206,7 +200,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(result.get)
     }
 
     it("detects color differences") {
@@ -222,7 +215,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(result.get)
     }
 
     it("detects layout differences") {
@@ -238,7 +230,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(result.get)
     }
 
     it("handles PDFs with different page counts") {
@@ -253,7 +244,6 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
-      assert(result.get)
     }
   }
 

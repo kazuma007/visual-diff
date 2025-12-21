@@ -3,7 +3,6 @@ package com.visualdiff.report
 import java.nio.file.Files
 import java.nio.file.Paths
 
-import com.visualdiff.cli.Config
 import com.visualdiff.core.DiffEngine
 import com.visualdiff.helper.ImageTestHelpers
 import com.visualdiff.helper.PdfTestHelpers

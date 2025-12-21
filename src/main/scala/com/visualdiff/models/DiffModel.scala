@@ -1,5 +1,9 @@
 package com.visualdiff.models
 
+import java.nio.file.Path
+import java.time.Duration
+import java.time.Instant
+
 import upickle.default.ReadWriter
 import upickle.default.macroRW
 
@@ -157,4 +161,45 @@ final case class TextElement(
     bbox: BoundingBox,
     pageNumber: Int,
     fontName: String,
+)
+
+/** File pair to compare */
+final case class BatchPair(
+    oldFile: Path,
+    newFile: Path,
+    relativePath: String, // For organizing output and display
+)
+
+/** Result of a single pair comparison */
+final case class PairResult(
+    pair: BatchPair,
+    result: Option[DiffResult], // None if failed
+    error: Option[String], // Error message if failed
+    duration: Duration,
+    outputDir: Path, // Where this pair's report was saved
+):
+
+  def isSuccess: Boolean = result.isDefined
+
+  def hasDifferences: Boolean = result.exists(_.hasDifferences)
+
+/** Overall batch comparison result */
+final case class BatchResult(
+    pairs: Seq[PairResult],
+    summary: BatchSummary,
+    startTime: Instant,
+    endTime: Instant,
+):
+
+  def hasAnyDifferences: Boolean = pairs.exists(_.hasDifferences)
+
+/** Summary statistics for batch comparison */
+final case class BatchSummary(
+    totalPairs: Int,
+    successful: Int,
+    successfulWithDiff: Int,
+    failed: Int,
+    totalPages: Int,
+    totalDifferences: Int,
+    totalDuration: Duration,
 )

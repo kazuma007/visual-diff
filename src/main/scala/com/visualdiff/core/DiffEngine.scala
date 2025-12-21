@@ -9,7 +9,6 @@ import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters.IterableHasAsScala
 
 import com.typesafe.scalalogging.LazyLogging
-import com.visualdiff.cli.Config
 import com.visualdiff.models._
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
