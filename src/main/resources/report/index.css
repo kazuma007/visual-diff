@@ -717,3 +717,92 @@ body {
         max-height: none !important;
     }
 }
+
+/* Image Format Notice Styling */
+.image-format-notice {
+  background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+  border: 2px solid #ffc107;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 20px auto;
+  max-width: 1200px;
+  box-shadow: 0 2px 8px rgba(255, 193, 7, 0.2);
+}
+
+.image-format-notice .notice-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #856404;
+  margin-bottom: 8px;
+}
+
+.image-format-notice .notice-icon {
+  font-size: 24px;
+}
+
+.image-format-notice ul.notice-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+
+.image-format-notice ul.notice-list li {
+  padding: 6px 0;
+  color: #856404;
+  font-size: 14px;
+}
+
+.image-format-notice ul.notice-list li strong {
+  color: #664d03;
+  margin-right: 4px;
+}
+
+.image-format-notice .notice-details {
+  margin-top: 12px;
+  border-top: 1px solid #ffc107;
+  padding-top: 12px;
+}
+
+.image-format-notice .notice-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #664d03;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.image-format-notice .notice-details summary:hover {
+  color: #856404;
+}
+
+.image-format-notice .notice-details p {
+  margin-top: 8px;
+  color: #856404;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Dark mode support for image notice */
+body.dark-mode .image-format-notice {
+  background: linear-gradient(135deg, #3a3a2e 0%, #4a4a3e 100%);
+  border-color: #d4a017;
+}
+
+body.dark-mode .image-format-notice .notice-header,
+body.dark-mode .image-format-notice ul.notice-list li,
+body.dark-mode .image-format-notice .notice-details summary,
+body.dark-mode .image-format-notice .notice-details p {
+  color: #f0e68c;
+}
+
+body.dark-mode .image-format-notice ul.notice-list li strong,
+body.dark-mode .image-format-notice .notice-details summary {
+  color: #ffd700;
+}
+
+body.dark-mode .image-format-notice .notice-details {
+  border-top-color: #d4a017;
+}

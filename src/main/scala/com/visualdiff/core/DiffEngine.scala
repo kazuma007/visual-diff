@@ -2,6 +2,7 @@ package com.visualdiff.core
 
 import java.awt.Color
 import java.awt.image.BufferedImage
+import java.nio.file.Path
 import javax.imageio.ImageIO
 
 import scala.collection.mutable.ListBuffer
@@ -12,8 +13,12 @@ import com.visualdiff.cli.Config
 import com.visualdiff.models._
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDFont
 import org.apache.pdfbox.pdmodel.font.PDType3Font
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
 import org.apache.pdfbox.rendering.ImageType
 import org.apache.pdfbox.rendering.PDFRenderer
 import org.apache.pdfbox.text.PDFTextStripper
@@ -32,17 +37,52 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
   /** Compares two PDF documents page-by-page and returns comprehensive diff results. */
   def compare(): DiffResult =
-    val oldDoc = Loader.loadPDF(config.oldPdf.toFile)
-    val newDoc = Loader.loadPDF(config.newPdf.toFile)
+    val oldDoc = loadDocument(config.oldFile)
+    val newDoc = loadDocument(config.newFile)
     try
       // Handle PDFs with different page counts by using the maximum
       val maxPages = math.max(oldDoc.getNumberOfPages, newDoc.getNumberOfPages)
       val pageDiffs = (0 until maxPages).map(page => comparePage(oldDoc, newDoc, page))
       val summary = createSummary(pageDiffs)
-      DiffResult(pageDiffs, summary)
+      DiffResult(pageDiffs, summary, config.hasImageInput)
     finally
       oldDoc.close()
       newDoc.close()
+
+  /** Loads a document, converting images to PDF if necessary. */
+  private def loadDocument(path: Path): PDDocument =
+    ImageFormat.fromPath(path) match
+      case Some(format) =>
+        logger.info(s"Detected ${format.displayName} image file, converting to PDF: $path")
+        convertImageToPdf(path.toFile)
+      case None =>
+        Loader.loadPDF(path.toFile)
+
+  /** Converts an image file to a single-page PDF document. */
+  private def convertImageToPdf(imageFile: java.io.File): PDDocument =
+    val doc = new PDDocument()
+    try
+      val bufferedImage = ImageIO.read(imageFile)
+
+      // Create a page with dimensions matching the image
+      val width = bufferedImage.getWidth
+      val height = bufferedImage.getHeight
+      val page = new PDPage(new PDRectangle(width, height))
+      doc.addPage(page)
+
+      // Add the image to the PDF
+      val pdImage = PDImageXObject.createFromFile(imageFile.getAbsolutePath, doc)
+      val contentStream = new PDPageContentStream(doc, page)
+      try
+        // Draw image at full page size
+        contentStream.drawImage(pdImage, 0, 0, width, height)
+      finally
+        contentStream.close()
+      doc
+    catch
+      case e: Exception =>
+        doc.close()
+        throw new RuntimeException(s"Failed to convert image to PDF: ${e.getMessage}", e)
 
   /** Performs comprehensive comparison of a single page across all difference dimensions.
     * Detects all differences without suppression and adds informational notice when font changes exist.

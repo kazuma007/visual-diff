@@ -7,7 +7,12 @@ import scalatags.Text.tags2.details
 /** HtmlComponents provides utility functions to generate HTML reports for visual diffs between PDFs. */
 object HtmlComponents:
 
-  def docTemplate(titleText: String, pageDiffs: Seq[PageDiff], summaryData: DiffSummary): String =
+  def docTemplate(
+      titleText: String,
+      pageDiffs: Seq[PageDiff],
+      summaryData: DiffSummary,
+      hasImageInput: Boolean,
+  ): String =
     "<!DOCTYPE html>" + html(lang := "en")(
       head(
         meta(charset := "UTF-8"),
@@ -25,6 +30,7 @@ object HtmlComponents:
           ),
         ),
         summaryBar(summaryData),
+        renderImageFormatNotice(hasImageInput),
         div(cls := "main-container")(
           sidebar(pageDiffs, summaryData),
           div(cls := "content")(
@@ -48,6 +54,35 @@ object HtmlComponents:
         summaryItem(s.fontDiffCount.toString, "Font Diffs"),
       ),
     )
+
+  /** Renders a global notice when image files are being compared instead of PDFs */
+  private def renderImageFormatNotice(hasImageInput: Boolean): Frag =
+    if hasImageInput then
+      div(cls := "image-format-notice")(
+        div(cls := "notice-header")(
+          span(cls := "notice-icon")("⚠️"),
+          span("Image Format Detected"),
+        ),
+        p(style := "margin: 12px 0 8px 0; color: var(--text-secondary);")(
+          s"One or both input files are images (${ImageFormat.displayNames}). These have been converted to PDF for comparison.",
+        ),
+        ul(cls := "notice-list")(
+          li(strong("Available:"), " Visual differences and Color differences"),
+          li(
+            strong("Not Available:"),
+            " Text, Layout, and Font analysis require native PDF files with embedded text layers",
+          ),
+        ),
+        details(cls := "notice-details", style := "margin-top: 8px;")(
+          tag("summary")("💡 Why can't text be detected?"),
+          p(
+            "Image files contain only pixels, not searchable text. ",
+            "To enable text/layout/font analysis, convert your documents to PDF format first, ",
+            "or use source files that already have text layers (e.g., PDFs created from Word/LaTeX).",
+          ),
+        ),
+      )
+    else frag()
 
   private def summaryItem(value: String, label: String): Frag =
     div(cls := "summary-item")(
