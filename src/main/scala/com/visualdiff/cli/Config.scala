@@ -3,9 +3,11 @@ package com.visualdiff.cli
 import java.nio.file.Path
 import java.nio.file.Paths
 
+import com.visualdiff.models.ImageFormat
+
 final case class Config(
-    oldPdf: Path,
-    newPdf: Path,
+    oldFile: Path,
+    newFile: Path,
     outputDir: Path = Paths.get(Config.DefaultOutputDir),
     thresholdPixel: Double = Config.DefaultThresholdPixel,
     thresholdLayout: Double = Config.DefaultThresholdLayout,
@@ -13,7 +15,11 @@ final case class Config(
     ignoreAnnotation: Boolean = false,
     failOnDiff: Boolean = false,
     dpi: Int = Config.DefaultDpi,
-)
+):
+
+  /** Checks if either input file is an image (non-PDF) format */
+  def hasImageInput: Boolean =
+    ImageFormat.isSupported(oldFile.toString) || ImageFormat.isSupported(newFile.toString)
 
 object Config:
 

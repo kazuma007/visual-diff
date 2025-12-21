@@ -45,6 +45,7 @@ final class Reporter(config: Config):
       "Visual Diff Report",
       if result.hasDifferences then pageDiffsToShow else Seq.empty,
       result.summary,
+      result.isImageComparison,
     )
 
     writeString("report.html", fullHtml)

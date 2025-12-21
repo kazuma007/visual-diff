@@ -106,9 +106,9 @@ final case class PageDiff(
     textDiffs: Seq[TextDiff],
     layoutDiffs: Seq[LayoutDiff],
     fontDiffs: Seq[FontDiff],
-    oldImagePath: Option[String], // NEW: separate old image
-    newImagePath: Option[String], // NEW: separate new image
-    diffImagePath: Option[String], // The diff highlight image
+    oldImagePath: Option[String],
+    newImagePath: Option[String],
+    diffImagePath: Option[String],
     colorImagePath: Option[String],
     suppressedDiffs: Option[SuppressedDiffs] = None,
     existsInOld: Boolean = true,
@@ -136,6 +136,7 @@ object DiffSummary:
 final case class DiffResult(
     pageDiffs: Seq[PageDiff],
     summary: DiffSummary,
+    isImageComparison: Boolean = false,
 ):
 
   def hasDifferences: Boolean =

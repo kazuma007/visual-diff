@@ -9,6 +9,7 @@ import scala.util.Try
 
 import com.typesafe.scalalogging.LazyLogging
 import com.visualdiff.core.DiffEngine
+import com.visualdiff.models.ImageFormat
 import com.visualdiff.report.Reporter
 import mainargs.Flag
 import mainargs.ParserForMethods
@@ -19,10 +20,10 @@ object Main extends LazyLogging:
 
   @main
   def visualDiff(
-      @arg(doc = "Path to the old PDF")
-      oldPdf: String,
-      @arg(doc = "Path to the new PDF")
-      newPdf: String,
+      @arg(doc = s"Path to the old file (PDF, ${ImageFormat.displayNames})")
+      oldFile: String,
+      @arg(doc = s"Path to the new file (PDF, ${ImageFormat.displayNames})")
+      newFile: String,
       @arg(short = 'o', doc = s"Output directory (default: ${Config.DefaultOutputDir})")
       out: String = Config.DefaultOutputDir,
       @arg(doc = s"Pixel diff threshold 0.0 - 1.0 (default: ${Config.DefaultThresholdPixel})")
@@ -39,7 +40,7 @@ object Main extends LazyLogging:
       dpi: Int = Config.DefaultDpi,
   ): Unit =
     val config = Config(
-      oldPdf = Paths.get(oldPdf), newPdf = Paths.get(newPdf), outputDir = Paths.get(out),
+      oldFile = Paths.get(oldFile), newFile = Paths.get(newFile), outputDir = Paths.get(out),
       thresholdPixel = thresholdPixel, thresholdLayout = thresholdLayout, thresholdColor = thresholdColor,
       ignoreAnnotation = ignoreAnnotation.value, failOnDiff = failOnDiff.value, dpi = dpi,
     )
@@ -60,9 +61,8 @@ object Main extends LazyLogging:
     ParserForMethods(this).runOrExit(args)
 
   def run(config: Config): Try[Boolean] = Try {
-    require(Files.exists(config.oldPdf), s"Old PDF not found: ${config.oldPdf}")
-    require(Files.exists(config.newPdf), s"New PDF not found: ${config.newPdf}")
-
+    require(Files.exists(config.oldFile), s"Old file not found: ${config.oldFile}")
+    require(Files.exists(config.newFile), s"New file not found: ${config.newFile}")
     Files.createDirectories(config.outputDir)
 
     val engine = new DiffEngine(config)
