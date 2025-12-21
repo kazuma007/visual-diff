@@ -103,7 +103,7 @@ The color threshold uses RGB Euclidean distance (range: 0-441).
 
 ## Examples
 
-The `example/` directory contains sample PDFs and a pre-generated report demonstrating the tool's capabilities.
+The `example/` directory contains sample PDFs and images.
 
 **Basic comparison:**
 
