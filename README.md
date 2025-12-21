@@ -161,6 +161,11 @@ sbt "testOnly com.visualdiff.cli.MainSpec"
 sbt "testOnly com.visualdiff.models.ImageFormatSpec"
 ```
 
+View test coverage locally:
+```bash
+sbt clean coverage test coverageReport
+```
+
 ### Code Formatting
 
 This project uses `scalafmt` for code formatting and `scalafix` for linting.
