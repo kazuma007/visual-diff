@@ -1,6 +1,9 @@
 package com.visualdiff.report
 
+import java.nio.file.Path
+
 import com.visualdiff.models._
+import com.visualdiff.util.FileUtils
 import scalatags.Text.all._
 import scalatags.Text.tags2.details
 
@@ -459,3 +462,248 @@ object HtmlComponents:
           ),
         )
       case _ => frag()
+
+  /** Generates the batch comparison report HTML */
+  def batchReportTemplate(batchResult: BatchResult, oldDir: Path, newDir: Path): String =
+    "<!DOCTYPE html>" + html(lang := "en")(
+      head(
+        meta(charset := "UTF-8"),
+        meta(name    := "viewport", attr("content") := "width=device-width, initial-scale=1.0"),
+        tag("title")("Batch Comparison Report"),
+        link(rel := "stylesheet", href := "report.css"),
+      ),
+      body(
+        div(cls := "header")(
+          div(cls := "header-content")(
+            h1("📦 Batch Comparison Report"),
+            div(cls := "header-controls")(
+              button(cls := "theme-toggle", onclick := "toggleTheme()")("🌙 Dark Mode"),
+            ),
+          ),
+        ),
+        batchSummaryBar(batchResult.summary),
+        div(cls := "main-container")(
+          div(cls := "content", style := "width: 100%; max-width: 1400px; margin: 0 auto;")(
+            batchQuickActions(),
+            batchComparisonTable(batchResult, oldDir, newDir),
+          ),
+        ),
+        script(src := "report.js"),
+      ),
+    ).render
+
+  /** Renders the summary bar for batch results */
+  private def batchSummaryBar(s: BatchSummary): Frag =
+    div(cls := "summary-bar")(
+      div(cls := "summary-content")(
+        summaryItem(s.totalPairs.toString, "Total Pairs"),
+        summaryItem((s.successful - s.successfulWithDiff).toString, "Identical"),
+        summaryItem(s.successfulWithDiff.toString, "With Diffs"),
+        summaryItem(s.failed.toString, "Failed"),
+        summaryItem(s.totalPages.toString, "Total Pages"),
+        summaryItem(s.unmatchedOldCount.toString, "Old Only"),
+        summaryItem(s.unmatchedNewCount.toString, "New Only"),
+        summaryItem(f"${s.totalDuration.toSeconds}s", "Duration"),
+      ),
+    )
+
+  /** Quick actions for batch report */
+  private def batchQuickActions(): Frag =
+    div(cls := "quick-actions")(
+      input(
+        tpe         := "text",
+        id          := "batch-search",
+        cls         := "batch-search-input",
+        placeholder := "🔍 Search files...",
+        onkeyup     := "filterBatchTable()",
+      ),
+      button(cls := "action-btn", onclick := "resetBatchFilters()")("🔄 Reset"),
+      button(cls := "action-btn", onclick := "printReport()")("🖨️ Print"),
+    )
+
+  /** Renders the comparison table for batch results */
+  private def batchComparisonTable(batchResult: BatchResult, oldDir: Path, newDir: Path): Frag =
+    div(style := "margin: 24px 0;")(
+      if batchResult.pairs.isEmpty && batchResult.unmatchedOld.isEmpty && batchResult.unmatchedNew.isEmpty then
+        div(cls := "no-diff")("✅ No file pairs found to compare.")
+      else
+        frag(
+          // Matched pairs table
+          if batchResult.pairs.nonEmpty then
+            frag(
+              h2(style := "margin-bottom: 16px; color: var(--text-primary);")(
+                s"${batchResult.pairs.size} File Pairs",
+              ),
+              div(cls := "batch-table-container")(
+                table(id := "batch-table", cls := "batch-table")(
+                  thead(
+                    tr(
+                      th(onclick := "sortBatchTable(0)", cls := "sortable")("Status ⇅"),
+                      th(onclick := "sortBatchTable(1)", cls := "sortable")("File Name ⇅"),
+                      th(onclick := "sortBatchTable(2)", cls := "sortable")("Pages ⇅"),
+                      th(onclick := "sortBatchTable(3)", cls := "sortable")("Visual ⇅"),
+                      th(onclick := "sortBatchTable(4)", cls := "sortable")("Text ⇅"),
+                      th(onclick := "sortBatchTable(5)", cls := "sortable")("Layout ⇅"),
+                      th(onclick := "sortBatchTable(6)", cls := "sortable")("Font ⇅"),
+                      th(onclick := "sortBatchTable(7)", cls := "sortable")("Color ⇅"),
+                      th(onclick := "sortBatchTable(8)", cls := "sortable")("Duration ⇅"),
+                      th("Report"),
+                    ),
+                  ),
+                  tbody(
+                    batchResult.pairs.zipWithIndex.map { case (pairResult, idx) =>
+                      renderBatchPairRow(pairResult, idx + 1)
+                    },
+                  ),
+                ),
+              ),
+            )
+          else frag(),
+          // Unmatched files section
+          renderUnmatchedFiles(batchResult, oldDir, newDir),
+        ),
+    )
+
+  /** Renders a single row in the batch comparison table */
+  private def renderBatchPairRow(pairResult: PairResult, index: Int): Frag =
+    val filename = pairResult.pair.oldFile.getFileName.toString
+
+    pairResult.result match
+      case Some(diffResult) =>
+        val statusValue = if diffResult.hasDifferences then "DIFF" else "OK"
+        val statusClass = if diffResult.hasDifferences then "batch-row-diff" else "batch-row-ok"
+        val badgeClass = if diffResult.hasDifferences then "status-badge-warning" else "status-badge-success"
+        val badgeText = if diffResult.hasDifferences then "⚠️ DIFF" else "✅ OK"
+        val s = diffResult.summary
+
+        tr(cls := statusClass)(
+          td(attr("data-status") := statusValue)(
+            span(cls := badgeClass)(badgeText),
+          ),
+          td(cls := "filename-cell", attr("title") := pairResult.pair.relativePath)(filename),
+          td(cls := "number-cell", attr("data-value") := s.totalPages.toString)(s.totalPages.toString),
+          td(cls := "number-cell", attr("data-value") := s.visualDiffCount.toString)(
+            if s.visualDiffCount > 0 then span(cls := "diff-badge")(s.visualDiffCount.toString) else "—",
+          ),
+          td(cls := "number-cell", attr("data-value") := s.textDiffCount.toString)(
+            if s.textDiffCount > 0 then span(cls := "diff-badge")(s.textDiffCount.toString) else "—",
+          ),
+          td(cls := "number-cell", attr("data-value") := s.layoutDiffCount.toString)(
+            if s.layoutDiffCount > 0 then span(cls := "diff-badge")(s.layoutDiffCount.toString) else "—",
+          ),
+          td(cls := "number-cell", attr("data-value") := s.fontDiffCount.toString)(
+            if s.fontDiffCount > 0 then span(cls := "diff-badge")(s.fontDiffCount.toString) else "—",
+          ),
+          td(cls := "number-cell", attr("data-value") := s.colorDiffCount.toString)(
+            if s.colorDiffCount > 0 then span(cls := "diff-badge")(s.colorDiffCount.toString) else "—",
+          ),
+          td(cls := "number-cell", attr("data-value") := pairResult.duration.toMillis.toString)(
+            f"${pairResult.duration.toMillis / 1000.0}%.2fs",
+          ),
+          td(cls := "action-cell")(
+            a(
+              href := f"pair_$index%03d_${FileUtils.sanitizeFilename(filename)}/report.html",
+              cls  := "report-link-btn",
+            )("View →"),
+          ),
+        )
+
+      case None =>
+        tr(cls := "batch-row-failed")(
+          td(attr("data-status") := "FAIL")(span(cls := "status-badge-error")("❌ FAIL")),
+          td(cls := "filename-cell", attr("title") := pairResult.pair.relativePath)(filename),
+          td(attr("colspan") := "7", cls := "error-cell")(
+            span(cls := "error-text")(pairResult.error.getOrElse("Unknown error")),
+          ),
+          td(cls := "number-cell", attr("data-value") := pairResult.duration.toMillis.toString)(
+            f"${pairResult.duration.toMillis / 1000.0}%.2fs",
+          ),
+          td(cls := "action-cell")("—"),
+        )
+
+  /** Renders unmatched files section with tables */
+  private def renderUnmatchedFiles(batchResult: BatchResult, oldDir: Path, newDir: Path): Frag =
+    if batchResult.unmatchedOld.isEmpty && batchResult.unmatchedNew.isEmpty then frag()
+    else
+      frag(
+        h2(style := "margin: 32px 0 16px 0; color: var(--text-primary);")(
+          "Unmatched Files",
+        ),
+        div(cls := "unmatched-notice")(
+          p(style := "color: var(--text-secondary); margin-bottom: 16px;")(
+            "These files exist in only one directory and were not compared.",
+          ),
+        ),
+
+        // Files only in OLD directory
+        if batchResult.unmatchedOld.nonEmpty then
+          div(style := "margin-bottom: 32px;")(
+            h3(
+              style := "color: var(--text-primary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;",
+            )(
+              span("📁"),
+              span(s"Only in OLD Directory (${batchResult.unmatchedOld.size})"),
+            ),
+            div(cls := "batch-table-container")(
+              table(cls := "batch-table unmatched-table")(
+                thead(
+                  tr(
+                    th(cls := "status-col")("Status"),
+                    th(cls := "filename-col")("File Name"),
+                    th(cls := "path-col")("Relative Path"),
+                  ),
+                ),
+                tbody(
+                  batchResult.unmatchedOld.sortBy(p => oldDir.relativize(p).toString).map { path =>
+                    val relativePath = oldDir.relativize(path).toString
+                    val filename = path.getFileName.toString
+                    tr(cls := "unmatched-row removed")(
+                      td(cls := "status-cell")(
+                        span(cls := "status-badge-removed")("➖ REMOVED"),
+                      ),
+                      td(cls := "filename-cell")(filename),
+                      td(cls := "path-cell", attr("title") := relativePath)(relativePath),
+                    )
+                  },
+                ),
+              ),
+            ),
+          )
+        else frag(),
+
+        // Files only in NEW directory
+        if batchResult.unmatchedNew.nonEmpty then
+          div(style := "margin-bottom: 32px;")(
+            h3(
+              style := "color: var(--text-primary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;",
+            )(
+              span("📁"),
+              span(s"Only in NEW Directory (${batchResult.unmatchedNew.size})"),
+            ),
+            div(cls := "batch-table-container")(
+              table(cls := "batch-table unmatched-table")(
+                thead(
+                  tr(
+                    th(cls := "status-col")("Status"),
+                    th(cls := "filename-col")("File Name"),
+                    th(cls := "path-col")("Relative Path"),
+                  ),
+                ),
+                tbody(
+                  batchResult.unmatchedNew.sortBy(p => newDir.relativize(p).toString).map { path =>
+                    val relativePath = newDir.relativize(path).toString
+                    val filename = path.getFileName.toString
+                    tr(cls := "unmatched-row added")(
+                      td(cls := "status-cell")(
+                        span(cls := "status-badge-added")("➕ ADDED"),
+                      ),
+                      td(cls := "filename-cell")(filename),
+                      td(cls := "path-cell", attr("title") := relativePath)(relativePath),
+                    )
+                  },
+                ),
+              ),
+            ),
+          )
+        else frag(),
+      )

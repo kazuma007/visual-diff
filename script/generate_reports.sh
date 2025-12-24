@@ -26,3 +26,14 @@ sbt "run \
 #  --old-file example/font-diff/testfiles/Lorem_Lato_11.pdf \
 #  --new-file example/font-diff/testfiles/Lorem_Roboto_11.pdf \
 #  --out example/font-diff/report
+
+# Batch diff example
+sbt "run \
+--batch-dir-old example/color-diff/testfiles/A \
+--batch-dir-new example/color-diff/testfiles/B \
+--out example/color-diff/batch/report"
+
+#java -jar target/scala-3.7.4/visualdiff.jar \
+#  --batch-dir-old example/color-diff/testfiles/A \
+#  --batch-dir-new example/color-diff/testfiles/B \
+#  --out example/color-diff/batch/report"

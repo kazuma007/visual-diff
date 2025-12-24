@@ -1,4 +1,4 @@
-package com.visualdiff.cli
+package com.visualdiff.models
 
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -32,3 +32,12 @@ object Config:
   val DefaultThresholdColor = 0.0 // RGB Euclidean distance threshold (0-441)
 
   val DefaultDpi = 150
+
+/** Configuration for batch comparison mode */
+final case class BatchConfig(
+    dirOld: Path,
+    dirNew: Path,
+    recursive: Boolean,
+    continueOnError: Boolean,
+    baseConfig: Config,
+)

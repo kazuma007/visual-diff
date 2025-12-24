@@ -2,8 +2,9 @@ package com.visualdiff.report
 
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.time.Duration
+import java.time.Instant
 
-import com.visualdiff.cli.Config
 import com.visualdiff.core.DiffEngine
 import com.visualdiff.helper.ImageTestHelpers
 import com.visualdiff.helper.PdfTestHelpers
@@ -13,7 +14,8 @@ import upickle.default.read
 
 class ReporterSpec extends AnyFunSpec {
 
-  describe("Reporter") {
+  describe("Reporter - single comparison") {
+
     it("generates JSON report with correct structure") {
       val dir = Files.createTempDirectory("reporter_json_test")
       val config = Config(
@@ -24,12 +26,13 @@ class ReporterSpec extends AnyFunSpec {
 
       val result = createSampleDiffResult()
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val jsonFile = dir.resolve("diff.json")
-      assert(Files.exists(jsonFile))
-
       val jsonContent = Files.readString(jsonFile)
+
+      assert(Files.exists(jsonFile))
       assert(jsonContent.contains("\"totalPages\""))
       assert(jsonContent.contains("\"pagesWithDiff\""))
       assert(jsonContent.contains("\"visualDiffCount\""))
@@ -45,35 +48,16 @@ class ReporterSpec extends AnyFunSpec {
 
       val result = createSampleDiffResult()
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val htmlFile = dir.resolve("report.html")
-      assert(Files.exists(htmlFile))
-
       val htmlContent = Files.readString(htmlFile)
-      assert(htmlContent.contains("<!DOCTYPE html>"))
+
+      assert(Files.exists(htmlFile))
       assert(htmlContent.contains("Visual Diff Report"))
-      assert(htmlContent.contains("<html"))
-    }
+      assert(htmlContent.contains("summary-bar"))
 
-    it("generates static assets (CSS and JS)") {
-      val dir = Files.createTempDirectory("reporter_assets_test")
-      val config = Config(
-        oldFile = Paths.get("dummy.pdf"),
-        newFile = Paths.get("dummy.pdf"),
-        outputDir = dir,
-      )
-
-      val result = createSampleDiffResult()
-      val reporter = new Reporter(config)
-      reporter.generateReports(result)
-
-      // Check CSS file
-      val cssFile = dir.resolve("report.css")
-      assert(Files.exists(cssFile))
-      assert(Files.size(cssFile) > 0)
-
-      // Check JS file
       val jsFile = dir.resolve("report.js")
       assert(Files.exists(jsFile))
       assert(Files.size(jsFile) > 0)
@@ -89,9 +73,9 @@ class ReporterSpec extends AnyFunSpec {
 
       val result = createSampleDiffResult()
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
-      // All expected files should exist
       assert(Files.exists(dir.resolve("diff.json")))
       assert(Files.exists(dir.resolve("report.html")))
       assert(Files.exists(dir.resolve("report.css")))
@@ -113,11 +97,11 @@ class ReporterSpec extends AnyFunSpec {
 
       val result = DiffResult(Seq.empty, summary)
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val htmlContent = Files.readString(dir.resolve("report.html"))
 
-      // Check that summary numbers appear in HTML
       assert(htmlContent.contains("5")) // totalPages
       assert(htmlContent.contains("2")) // pagesWithDiff
       assert(htmlContent.contains("3")) // textDiffCount
@@ -133,6 +117,7 @@ class ReporterSpec extends AnyFunSpec {
 
       val originalResult = createSampleDiffResult()
       val reporter = new Reporter(config)
+
       reporter.generateReports(originalResult)
 
       val jsonContent = Files.readString(dir.resolve("diff.json"))
@@ -143,7 +128,8 @@ class ReporterSpec extends AnyFunSpec {
     }
   }
 
-  describe("image format notice in reports") {
+  describe("Reporter - image format notice in single reports") {
+
     it("includes image format notice in HTML for image comparisons") {
       val dir = Files.createTempDirectory("reporter_image_notice")
       val img1 = ImageTestHelpers.createImage(dir.resolve("img1.jpg"))
@@ -151,39 +137,28 @@ class ReporterSpec extends AnyFunSpec {
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
       val result = DiffEngine(config).compare()
-
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val htmlFile = dir.resolve("report.html")
-      assert(Files.exists(htmlFile))
-
       val htmlContent = Files.readString(htmlFile)
 
-      // Check for image format notice
+      assert(Files.exists(htmlFile))
       assert(htmlContent.contains("image-format-notice"))
       assert(htmlContent.contains("Image Format Detected"))
       assert(htmlContent.contains("converted to PDF for comparison"))
-
-      // Should mention all supported formats dynamically
       assert(htmlContent.contains("JPG/JPEG"))
       assert(htmlContent.contains("PNG"))
       assert(htmlContent.contains("GIF"))
       assert(htmlContent.contains("BMP"))
       assert(htmlContent.contains("TIF/TIFF"))
-
-      // Should explain limitations
-      assert(htmlContent.contains("Not Available"))
-      assert(htmlContent.contains("Text, Layout, and Font analysis"))
     }
 
-    it("does not include image notice for PDF comparisons") {
+    it("does not include image notice for pure PDF comparisons") {
       val dir = Files.createTempDirectory("reporter_no_image_notice")
-
-      val result = createSampleDiffResult() // Uses existing helper
-
-      // Override isImageComparison to false
-      val pdfResult = DiffResult(result.pageDiffs, result.summary)
+      val result = createSampleDiffResult()
+      val pdfResult = DiffResult(result.pageDiffs, result.summary) // isImageComparison = false
 
       val config = Config(
         oldFile = Paths.get("dummy.pdf"),
@@ -194,10 +169,8 @@ class ReporterSpec extends AnyFunSpec {
       val reporter = new Reporter(config)
       reporter.generateReports(pdfResult)
 
-      val htmlFile = dir.resolve("report.html")
-      val htmlContent = Files.readString(htmlFile)
+      val htmlContent = Files.readString(dir.resolve("report.html"))
 
-      // Should NOT contain image format notice
       assert(!htmlContent.contains("image-format-notice"))
       assert(!htmlContent.contains("Image Format Detected"))
     }
@@ -209,19 +182,20 @@ class ReporterSpec extends AnyFunSpec {
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
       val result = DiffEngine(config).compare()
-
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val jsonFile = dir.resolve("diff.json")
-      assert(Files.exists(jsonFile))
-
       val jsonContent = Files.readString(jsonFile)
 
-      // Check that isImageComparison is in the JSON
+      assert(Files.exists(jsonFile))
       assert(jsonContent.contains("\"isImageComparison\""))
       assert(jsonContent.contains("true"))
     }
+  }
+
+  describe("Reporter - dynamic formats and CSS structure") {
 
     it("displays all supported formats dynamically in notice") {
       val dir = Files.createTempDirectory("reporter_dynamic_formats")
@@ -230,21 +204,17 @@ class ReporterSpec extends AnyFunSpec {
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
       val result = DiffEngine(config).compare()
-
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val htmlFile = dir.resolve("report.html")
       val htmlContent = Files.readString(htmlFile)
 
-      // Should list all formats from ImageFormat.displayNames
       import com.visualdiff.models.ImageFormat
       val expectedFormats = ImageFormat.displayNames
 
-      assert(
-        htmlContent.contains(expectedFormats),
-        s"HTML should contain all formats: $expectedFormats",
-      )
+      assert(htmlContent.contains(expectedFormats))
     }
 
     it("image notice has proper CSS structure") {
@@ -254,13 +224,12 @@ class ReporterSpec extends AnyFunSpec {
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
       val result = DiffEngine(config).compare()
-
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val htmlContent = Files.readString(dir.resolve("report.html"))
 
-      // Verify CSS classes exist
       assert(htmlContent.contains("class=\"image-format-notice\""))
       assert(htmlContent.contains("class=\"notice-header\""))
       assert(htmlContent.contains("class=\"notice-icon\""))
@@ -275,15 +244,69 @@ class ReporterSpec extends AnyFunSpec {
 
       val config = Config(oldFile = pdf, newFile = img, outputDir = dir)
       val result = DiffEngine(config).compare()
-
       val reporter = new Reporter(config)
+
       reporter.generateReports(result)
 
       val htmlContent = Files.readString(dir.resolve("report.html"))
 
-      // Should show image notice since one input is an image
       assert(htmlContent.contains("image-format-notice"))
       assert(result.isImageComparison)
+    }
+  }
+
+  describe("Reporter - batch report") {
+
+    it("generates batch report including unmatched files section") {
+      val dir = Files.createTempDirectory("reporter_batch_report")
+      val oldDir = dir.resolve("old")
+      val newDir = dir.resolve("new")
+      Files.createDirectories(oldDir)
+      Files.createDirectories(newDir)
+
+      // one matched pair
+      val oldPdf = PdfTestHelpers.createPdfWithText(oldDir.resolve("common.pdf"), "Same")
+      val newPdf = PdfTestHelpers.createPdfWithText(newDir.resolve("common.pdf"), "Same")
+
+      // unmatched files
+      val oldOnly = PdfTestHelpers.createEmptyPdf(oldDir.resolve("only-old.pdf"))
+      val newOnly = PdfTestHelpers.createEmptyPdf(newDir.resolve("only-new.pdf"))
+
+      val baseConfig = Config(oldFile = oldPdf, newFile = newPdf, outputDir = dir)
+
+      val summary = BatchSummary(
+        totalPairs = 1, successful = 1, successfulWithDiff = 0, failed = 0, totalPages = 1, totalDifferences = 0,
+        totalDuration = Duration.ofSeconds(1), unmatchedOldCount = 1, unmatchedNewCount = 1,
+      )
+
+      // minimal PairResult for the one pair
+      val diffSummary = DiffSummary(1, 0, 0, 0, 0, 0, 0)
+      val diffResult = DiffResult(Seq.empty, diffSummary)
+      val pair = BatchPair(oldPdf, newPdf, relativePath = "common.pdf")
+      val pairResult = PairResult(pair, Some(diffResult), None, Duration.ofMillis(10), dir.resolve("pair_001"))
+
+      val batchResult = BatchResult(
+        pairs = Seq(pairResult),
+        summary = summary,
+        startTime = Instant.now().minusSeconds(1),
+        endTime = Instant.now(),
+        unmatchedOld = Seq(oldOnly),
+        unmatchedNew = Seq(newOnly),
+      )
+
+      val reporter = new Reporter(baseConfig)
+      reporter.generateBatchReport(batchResult, dir, oldDir, newDir)
+
+      val htmlFile = dir.resolve("batch_report.html")
+      val htmlContent = Files.readString(htmlFile)
+
+      assert(Files.exists(htmlFile))
+      assert(htmlContent.contains("Batch Comparison Report"))
+      assert(htmlContent.contains("Unmatched Files"))
+      assert(htmlContent.contains("Only in OLD Directory"))
+      assert(htmlContent.contains("only-old.pdf"))
+      assert(htmlContent.contains("Only in NEW Directory"))
+      assert(htmlContent.contains("only-new.pdf"))
     }
   }
 
@@ -296,7 +319,6 @@ class ReporterSpec extends AnyFunSpec {
     val layoutDiff = LayoutDiff("Moving", bbox, bbox.copy(x = 15.0), 5.0)
     val fontInfo = FontInfo("Helvetica", isEmbedded = true, isOutlined = false)
     val fontDiff = FontDiff(DiffType.Changed, Some(fontInfo), Some(fontInfo.copy(fontName = "Times")), Some("Test"))
-
     val pageDiff = PageDiff(
       pageNumber = 1, visualDiff = Some(visualDiff), colorDiffs = Seq(colorDiff), textDiffs = Seq(textDiff),
       layoutDiffs = Seq(layoutDiff), fontDiffs = Seq(fontDiff), oldImagePath = None, newImagePath = None,

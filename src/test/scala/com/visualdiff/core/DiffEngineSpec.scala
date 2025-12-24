@@ -3,9 +3,9 @@ package com.visualdiff.core
 import java.awt.Color
 import java.nio.file.Files
 
-import com.visualdiff.cli.Config
 import com.visualdiff.helper.ImageTestHelpers
 import com.visualdiff.helper.PdfTestHelpers
+import com.visualdiff.models.Config
 import com.visualdiff.models.DiffType._
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.scalatest.funspec.AnyFunSpec
