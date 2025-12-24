@@ -31,15 +31,8 @@ final class Reporter(config: Config):
     writeString("diff.json", json)
 
   private def generateHtmlReport(result: DiffResult): Unit =
-    val pageDiffsToShow = result.pageDiffs.filter(p =>
-      p.visualDiff.exists(_.pixelDifferenceRatio > config.thresholdPixel) ||
-        p.colorDiffs.nonEmpty ||
-        p.textDiffs.nonEmpty ||
-        p.layoutDiffs.nonEmpty ||
-        p.fontDiffs.nonEmpty ||
-        !p.existsInOld ||
-        !p.existsInNew,
-    )
+    // Use the hasDifferences field from PageDiff to filter pages
+    val pageDiffsToShow = result.pageDiffs.filter(_.hasDifferences)
 
     val fullHtml = HtmlComponents.docTemplate(
       "Visual Diff Report",
