@@ -5,6 +5,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 import com.visualdiff.helper.PdfTestHelpers
+import com.visualdiff.models.BatchConfig
 import com.visualdiff.models.Config
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.scalatest.funspec.AnyFunSpec
@@ -244,6 +245,163 @@ class MainSpec extends AnyFunSpec {
 
       val result = Main.run(config)
       assert(result.isSuccess)
+    }
+  }
+
+  describe("Main.runBatch") {
+
+    it("executes batch mode successfully and generates batch report") {
+      val dir = Files.createTempDirectory("main_batch_success")
+      val oldDir = dir.resolve("old")
+      val newDir = dir.resolve("new")
+      Files.createDirectories(oldDir)
+      Files.createDirectories(newDir)
+
+      PdfTestHelpers.createEmptyPdf(oldDir.resolve("doc1.pdf"))
+      PdfTestHelpers.createEmptyPdf(oldDir.resolve("doc2.pdf"))
+      PdfTestHelpers.createEmptyPdf(newDir.resolve("doc1.pdf"))
+      PdfTestHelpers.createEmptyPdf(newDir.resolve("doc2.pdf"))
+
+      val batchConfig = BatchConfig(
+        dirOld = oldDir,
+        dirNew = newDir,
+        recursive = false,
+        continueOnError = true,
+        baseConfig = Config(
+          oldFile = oldDir,
+          newFile = newDir,
+          outputDir = dir.resolve("output"),
+        ),
+      )
+
+      val result = Main.runBatch(batchConfig)
+
+      assert(result.isSuccess)
+      assert(Files.exists(dir.resolve("output/batch_report.html")))
+      assert(Files.exists(dir.resolve("output/report.css")))
+      assert(Files.exists(dir.resolve("output/report.js")))
+      assert(Files.exists(dir.resolve("output/pair_001_doc1.pdf/report.html")))
+      assert(Files.exists(dir.resolve("output/pair_002_doc2.pdf/report.html")))
+    }
+
+    it("fails validation if batch directory does not exist") {
+      val dir = Files.createTempDirectory("main_batch_fail")
+
+      val batchConfig = BatchConfig(
+        dirOld = dir.resolve("nonexistent_old"),
+        dirNew = dir.resolve("nonexistent_new"),
+        recursive = false,
+        continueOnError = true,
+        baseConfig = Config(
+          oldFile = dir,
+          newFile = dir,
+          outputDir = dir.resolve("output"),
+        ),
+      )
+
+      val result = Main.runBatch(batchConfig)
+
+      assert(result.isSuccess) // Should succeed but with no pairs
+      assert(result.get.summary.totalPairs == 0)
+    }
+
+    it("returns batch result with correct statistics") {
+      val dir = Files.createTempDirectory("main_batch_stats")
+      val oldDir = dir.resolve("old")
+      val newDir = dir.resolve("new")
+      Files.createDirectories(oldDir)
+      Files.createDirectories(newDir)
+
+      PdfTestHelpers.createPdfWithText(oldDir.resolve("same.pdf"), "Identical")
+      PdfTestHelpers.createPdfWithText(newDir.resolve("same.pdf"), "Identical")
+
+      PdfTestHelpers.createPdfWithText(oldDir.resolve("diff.pdf"), "Old")
+      PdfTestHelpers.createPdfWithText(newDir.resolve("diff.pdf"), "New")
+
+      val batchConfig = BatchConfig(
+        dirOld = oldDir,
+        dirNew = newDir,
+        recursive = false,
+        continueOnError = true,
+        baseConfig = Config(
+          oldFile = oldDir,
+          newFile = newDir,
+          outputDir = dir.resolve("output"),
+        ),
+      )
+
+      val result = Main.runBatch(batchConfig)
+
+      assert(result.isSuccess)
+      val batchResult = result.get
+      assert(batchResult.summary.totalPairs == 2)
+      assert(batchResult.summary.successful == 2)
+      assert(batchResult.summary.successfulWithDiff == 1)
+      assert(batchResult.hasAnyDifferences)
+    }
+
+    it("respects continueOnError flag in batch mode") {
+      val dir = Files.createTempDirectory("main_batch_continue_error")
+      val oldDir = dir.resolve("old")
+      val newDir = dir.resolve("new")
+      Files.createDirectories(oldDir)
+      Files.createDirectories(newDir)
+
+      PdfTestHelpers.createEmptyPdf(oldDir.resolve("valid.pdf"))
+      PdfTestHelpers.createEmptyPdf(newDir.resolve("valid.pdf"))
+
+      Files.writeString(oldDir.resolve("corrupt.pdf"), "INVALID")
+      Files.writeString(newDir.resolve("corrupt.pdf"), "INVALID")
+
+      val batchConfig = BatchConfig(
+        dirOld = oldDir,
+        dirNew = newDir,
+        recursive = false,
+        continueOnError = true,
+        baseConfig = Config(
+          oldFile = oldDir,
+          newFile = newDir,
+          outputDir = dir.resolve("output"),
+        ),
+      )
+
+      val result = Main.runBatch(batchConfig)
+
+      assert(result.isSuccess)
+      assert(result.get.summary.failed == 1)
+      assert(result.get.summary.successful == 1)
+    }
+
+    it("creates output directory if it doesn't exist in batch mode") {
+      val dir = Files.createTempDirectory("main_batch_create_dir")
+      val oldDir = dir.resolve("old")
+      val newDir = dir.resolve("new")
+      val outputDir = dir.resolve("new_output_dir")
+
+      Files.createDirectories(oldDir)
+      Files.createDirectories(newDir)
+      PdfTestHelpers.createEmptyPdf(oldDir.resolve("doc.pdf"))
+      PdfTestHelpers.createEmptyPdf(newDir.resolve("doc.pdf"))
+
+      assert(!Files.exists(outputDir))
+
+      val batchConfig = BatchConfig(
+        dirOld = oldDir,
+        dirNew = newDir,
+        recursive = false,
+        continueOnError = true,
+        baseConfig = Config(
+          oldFile = oldDir,
+          newFile = newDir,
+          outputDir = outputDir,
+        ),
+      )
+
+      val result = Main.runBatch(batchConfig)
+
+      assert(result.isSuccess)
+      assert(Files.exists(outputDir))
+      assert(Files.exists(outputDir.resolve("batch_report.html")))
     }
   }
 

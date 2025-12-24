@@ -3,6 +3,7 @@ package com.visualdiff.models
 import java.nio.file.Paths
 
 import org.scalatest.funspec.AnyFunSpec
+import org.scalatest.prop.TableDrivenPropertyChecks._
 
 class ImageFormatSpec extends AnyFunSpec {
 
@@ -20,34 +21,51 @@ class ImageFormatSpec extends AnyFunSpec {
     }
 
     it("detects supported image files correctly") {
-      val supportedFiles = Seq(
-        "photo.jpg", "image.JPEG", "screenshot.png", "animation.gif", "bitmap.bmp", "scan.tif", "document.tiff",
+      val testCases = Table(
+        "filename", "photo.jpg", "image.JPEG", "screenshot.png", "animation.gif", "bitmap.bmp", "scan.tif",
+        "document.tiff",
       )
 
-      supportedFiles.foreach { filename =>
+      forAll(testCases) { filename =>
         assert(ImageFormat.isSupported(filename), s"Failed to detect $filename as supported")
       }
     }
 
     it("rejects non-image files") {
-      val unsupportedFiles = Seq(
-        "document.pdf", "text.txt", "data.json", "image.webp", "video.mp4", "photo.jpeg.pdf", // Edge case: ends with .pdf
+      val testCases = Table(
+        "filename", "document.pdf", "text.txt", "data.json", "image.webp", "video.mp4", "photo.jpeg.pdf", // Edge case: ends with .pdf
+        "file.doc", "spreadsheet.xlsx", "archive.zip", "script.sh",
       )
 
-      unsupportedFiles.foreach { filename =>
+      forAll(testCases) { filename =>
         assert(!ImageFormat.isSupported(filename), s"Incorrectly detected $filename as supported")
       }
     }
 
     it("is case-insensitive for extension detection") {
-      assert(ImageFormat.isSupported("photo.JPG"))
-      assert(ImageFormat.isSupported("image.Png"))
-      assert(ImageFormat.isSupported("file.GIF"))
-      assert(ImageFormat.isSupported("doc.TIF"))
+      val testCases = Table(
+        ("filename", "expectedSupport"),
+        ("photo.JPG", true),
+        ("image.Png", true),
+        ("file.GIF", true),
+        ("doc.TIF", true),
+        ("scan.TIFF", true),
+        ("image.BMP", true),
+        ("photo.JPEG", true),
+        ("file.JpG", true),
+        ("doc.PnG", true),
+        ("FILE.PDF", false),
+        ("DOC.TXT", false),
+      )
+
+      forAll(testCases) { (filename, expectedSupport) =>
+        assert(ImageFormat.isSupported(filename) == expectedSupport, s"Case-insensitive check failed for $filename")
+      }
     }
 
     it("detects format from path") {
-      val testCases = Seq(
+      val testCases = Table(
+        ("filename", "expected"),
         ("photo.jpg", Some(ImageFormat.JPEG)),
         ("image.jpeg", Some(ImageFormat.JPEG)),
         ("screen.png", Some(ImageFormat.PNG)),
@@ -57,9 +75,11 @@ class ImageFormatSpec extends AnyFunSpec {
         ("doc.tiff", Some(ImageFormat.TIFF)),
         ("document.pdf", None),
         ("file.txt", None),
+        ("Photo.JPG", Some(ImageFormat.JPEG)),
+        ("IMAGE.PNG", Some(ImageFormat.PNG)),
       )
 
-      testCases.foreach { case (filename, expected) =>
+      forAll(testCases) { (filename, expected) =>
         val path = Paths.get(filename)
         val detected = ImageFormat.fromPath(path)
         assert(detected == expected, s"Failed for $filename: expected $expected, got $detected")
@@ -67,34 +87,94 @@ class ImageFormatSpec extends AnyFunSpec {
     }
 
     it("handles paths with directories") {
-      val path = Paths.get("/home/user/images/photo.jpg")
-      assert(ImageFormat.fromPath(path).contains(ImageFormat.JPEG))
+      val testCases = Table(
+        ("path", "expected"),
+        ("/home/user/images/photo.jpg", Some(ImageFormat.JPEG)),
+        ("C:\\Users\\Documents\\image.png", Some(ImageFormat.PNG)),
+        ("./relative/path/file.gif", Some(ImageFormat.GIF)),
+        ("../parent/scan.tif", Some(ImageFormat.TIFF)),
+        ("/tmp/bitmap.bmp", Some(ImageFormat.BMP)),
+        ("/no/extension/file", None),
+      )
+
+      forAll(testCases) { (pathStr, expected) =>
+        val path = Paths.get(pathStr)
+        assert(ImageFormat.fromPath(path) == expected, s"Failed for path: $pathStr")
+      }
     }
 
     it("provides correct display names for each format") {
-      assert(ImageFormat.JPEG.displayName == "JPG/JPEG")
-      assert(ImageFormat.PNG.displayName == "PNG")
-      assert(ImageFormat.GIF.displayName == "GIF")
-      assert(ImageFormat.BMP.displayName == "BMP")
-      assert(ImageFormat.TIFF.displayName == "TIF/TIFF")
+      val testCases = Table(
+        ("format", "expectedName"),
+        (ImageFormat.JPEG, "JPG/JPEG"),
+        (ImageFormat.PNG, "PNG"),
+        (ImageFormat.GIF, "GIF"),
+        (ImageFormat.BMP, "BMP"),
+        (ImageFormat.TIFF, "TIF/TIFF"),
+      )
+
+      forAll(testCases) { (format, expectedName) =>
+        assert(format.displayName == expectedName)
+      }
     }
 
     it("provides correct extensions for each format") {
-      assert(ImageFormat.JPEG.extensions == Seq(".jpg", ".jpeg"))
-      assert(ImageFormat.PNG.extensions == Seq(".png"))
-      assert(ImageFormat.GIF.extensions == Seq(".gif"))
-      assert(ImageFormat.BMP.extensions == Seq(".bmp"))
-      assert(ImageFormat.TIFF.extensions == Seq(".tif", ".tiff"))
+      val testCases = Table(
+        ("format", "expectedExtensions"),
+        (ImageFormat.JPEG, Seq(".jpg", ".jpeg")),
+        (ImageFormat.PNG, Seq(".png")),
+        (ImageFormat.GIF, Seq(".gif")),
+        (ImageFormat.BMP, Seq(".bmp")),
+        (ImageFormat.TIFF, Seq(".tif", ".tiff")),
+      )
+
+      forAll(testCases) { (format, expectedExtensions) =>
+        assert(format.extensions == expectedExtensions)
+      }
     }
 
     it("lists all formats") {
       val allFormats = ImageFormat.all
       assert(allFormats.size == 5)
-      assert(allFormats.contains(ImageFormat.JPEG))
-      assert(allFormats.contains(ImageFormat.PNG))
-      assert(allFormats.contains(ImageFormat.GIF))
-      assert(allFormats.contains(ImageFormat.BMP))
-      assert(allFormats.contains(ImageFormat.TIFF))
+
+      val expectedFormats = Table(
+        "format", ImageFormat.JPEG, ImageFormat.PNG, ImageFormat.GIF, ImageFormat.BMP, ImageFormat.TIFF,
+      )
+
+      forAll(expectedFormats) { format =>
+        assert(allFormats.contains(format), s"Missing format: $format")
+      }
+    }
+
+    it("handles edge cases in filename detection") {
+      val testCases = Table(
+        ("description", "filename", "expectedSupport"),
+        ("no extension", "file", false),
+        ("dot only", ".", false),
+        ("extension only", ".jpg", true),
+        ("multiple dots", "file.backup.jpg", true),
+        ("hidden file", ".hidden.png", true),
+        ("ends with dot", "file.jpg.", false),
+        ("mixed case middle", "file.JpG", true),
+        ("extra dots", "file...png", true),
+        ("space before ext", "file .jpg", true),
+      )
+
+      forAll(testCases) { (desc, filename, expectedSupport) =>
+        assert(ImageFormat.isSupported(filename) == expectedSupport, s"Failed: $desc for $filename")
+      }
+    }
+
+    it("correctly identifies all supported extensions") {
+      val testCases = Table(
+        "extension", ".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif", ".GIF", ".bmp", ".BMP", ".tif", ".tiff",
+        ".TIF", ".TIFF",
+      )
+
+      forAll(testCases) { ext =>
+        val filename = s"testfile$ext"
+        assert(ImageFormat.isSupported(filename), s"Should support $ext extension")
+      }
     }
   }
 
