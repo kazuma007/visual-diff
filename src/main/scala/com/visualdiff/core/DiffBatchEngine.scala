@@ -24,17 +24,22 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
     val startTime = Instant.now()
     logger.info(s"Starting batch comparison: ${batchConfig.dirOld} vs ${batchConfig.dirNew}")
 
-    // 1. Discover file pairs
-    val pairs = discoverPairs()
+    // 1. Discover file pairs and unmatched files
+    val (pairs, unmatchedOld, unmatchedNew) = discoverPairs()
     logger.info(s"Found ${pairs.size} file pair(s) to compare")
+
+    if unmatchedOld.nonEmpty then logger.warn(s"${unmatchedOld.size} file(s) only in OLD directory")
+    if unmatchedNew.nonEmpty then logger.warn(s"${unmatchedNew.size} file(s) only in NEW directory")
 
     if pairs.isEmpty then
       logger.warn("No matching files found")
       return BatchResult(
         Seq.empty,
-        BatchSummary(0, 0, 0, 0, 0, 0, Duration.ZERO),
+        BatchSummary(0, 0, 0, 0, 0, 0, Duration.ZERO, unmatchedOld.size, unmatchedNew.size),
         startTime,
         Instant.now(),
+        unmatchedOld,
+        unmatchedNew,
       )
 
     // 2. Execute comparisons sequentially
@@ -45,9 +50,9 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
     // 3. Create batch result
     val endTime = Instant.now()
     val totalDuration = Duration.between(startTime, endTime)
-    val summary = createSummary(results, totalDuration)
+    val summary = createSummary(results, totalDuration, unmatchedOld.size, unmatchedNew.size)
 
-    val batchResult = BatchResult(results, summary, startTime, endTime)
+    val batchResult = BatchResult(results, summary, startTime, endTime, unmatchedOld, unmatchedNew)
 
     logger.info(s"Batch completed in ${totalDuration.toSeconds}s")
     logSummary(summary)
@@ -55,7 +60,7 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
     batchResult
 
   /** Discovers file pairs by matching filenames between old and new directories */
-  private def discoverPairs(): Seq[BatchPair] =
+  private def discoverPairs(): (Seq[BatchPair], Seq[Path], Seq[Path]) =
     val oldFiles = scanDirectory(batchConfig.dirOld)
     val newFiles = scanDirectory(batchConfig.dirNew)
 
@@ -64,14 +69,42 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
     // Match by filename only
     val newFilesByName = newFiles.groupBy(_.getFileName.toString)
 
-    oldFiles.flatMap { oldFile =>
+    val pairs = oldFiles.flatMap { oldFile =>
       val filename = oldFile.getFileName.toString
       newFilesByName.get(filename).map { matchedNewFiles =>
-        val newFile = matchedNewFiles.head // Take first match
+        val newFile = matchedNewFiles.head
         val relativePath = batchConfig.dirOld.relativize(oldFile).toString
         BatchPair(oldFile, newFile, relativePath)
       }
     }
+
+    // Find unmatched files
+    val matchedOldFiles = pairs.map(_.oldFile).toSet
+    val matchedNewFiles = pairs.map(_.newFile).toSet
+
+    val unmatchedOld = oldFiles.filterNot(matchedOldFiles.contains)
+    val unmatchedNew = newFiles.filterNot(matchedNewFiles.contains)
+
+    (pairs, unmatchedOld, unmatchedNew)
+
+  /** Creates summary statistics from all pair results */
+  private def createSummary(
+      results: Seq[PairResult],
+      totalDuration: Duration,
+      unmatchedOldCount: Int,
+      unmatchedNewCount: Int,
+  ): BatchSummary =
+    val successful = results.count(_.isSuccess)
+    val successfulWithDiff = results.count(_.hasDifferences)
+    val failed = results.count(!_.isSuccess)
+
+    val totalPages = results.flatMap(_.result).map(_.summary.totalPages).sum
+    val totalDifferences = results.flatMap(_.result).count(_.hasDifferences)
+
+    BatchSummary(
+      results.size, successful, successfulWithDiff, failed, totalPages, totalDifferences, totalDuration,
+      unmatchedOldCount, unmatchedNewCount,
+    )
 
   /** Scans directory for supported files (PDF and image formats) */
   private def scanDirectory(dir: Path): Seq[Path] =
@@ -159,17 +192,20 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
 
   /** Logs batch summary to console */
   private def logSummary(summary: BatchSummary): Unit =
-    val report = s"""
-      |============================================================
-      |BATCH SUMMARY
-      |============================================================
-      |Total pairs:              ${summary.totalPairs}
-      |Successful (no diff):     ${summary.successful - summary.successfulWithDiff}
-      |Successful (with diff):   ${summary.successfulWithDiff}
-      |Failed:                   ${summary.failed}
-      |Total pages compared:     ${summary.totalPages}
-      |Total duration:           ${summary.totalDuration.toSeconds}s
-      |============================================================
+    val report =
+      s"""
+        |============================================================
+        |BATCH SUMMARY
+        |============================================================
+        |Total pairs:              ${summary.totalPairs}
+        |Successful (no diff):     ${summary.successful - summary.successfulWithDiff}
+        |Successful (with diff):   ${summary.successfulWithDiff}
+        |Failed:                   ${summary.failed}
+        |Total pages compared:     ${summary.totalPages}
+        |Unmatched in OLD:         ${summary.unmatchedOldCount}
+        |Unmatched in NEW:         ${summary.unmatchedNewCount}
+        |Total duration:           ${summary.totalDuration.toSeconds}s
+        |============================================================
     """.stripMargin
 
     logger.info(report)

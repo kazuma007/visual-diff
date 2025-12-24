@@ -183,17 +183,19 @@ final case class PairResult(
 
   def hasDifferences: Boolean = result.exists(_.hasDifferences)
 
-/** Overall batch comparison result */
+/** Batch comparison result including file discovery information */
 final case class BatchResult(
     pairs: Seq[PairResult],
     summary: BatchSummary,
     startTime: Instant,
     endTime: Instant,
+    unmatchedOld: Seq[Path] = Seq.empty,
+    unmatchedNew: Seq[Path] = Seq.empty,
 ):
 
   def hasAnyDifferences: Boolean = pairs.exists(_.hasDifferences)
 
-/** Summary statistics for batch comparison */
+/** Batch summary statistics */
 final case class BatchSummary(
     totalPairs: Int,
     successful: Int,
@@ -202,4 +204,6 @@ final case class BatchSummary(
     totalPages: Int,
     totalDifferences: Int,
     totalDuration: Duration,
+    unmatchedOldCount: Int = 0,
+    unmatchedNewCount: Int = 0,
 )

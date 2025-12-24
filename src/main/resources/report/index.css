@@ -1068,3 +1068,114 @@ body.dark-mode .image-format-notice .notice-details {
     display: none;
   }
 }
+
+/* Unmatched files section */
+.unmatched-notice {
+  background: var(--surface);
+  border-left: 4px solid var(--warning);
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.unmatched-notice p {
+  margin: 0;
+}
+
+/* Unmatched table styles */
+.unmatched-table {
+  width: 100%;
+}
+
+.unmatched-table thead th {
+  background: var(--surface);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.unmatched-row {
+  transition: background-color 0.2s ease;
+}
+
+.unmatched-row:hover {
+  background: var(--hover) !important;
+}
+
+.unmatched-row.removed {
+  background: rgba(239, 83, 80, 0.05);
+  border-left: 3px solid #ef5350;
+}
+
+.unmatched-row.added {
+  background: rgba(102, 187, 106, 0.05);
+  border-left: 3px solid #66bb6a;
+}
+
+/* Status badges for unmatched files */
+.status-badge-removed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: #ef5350;
+  color: white;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge-added {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: #66bb6a;
+  color: white;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Column widths for unmatched table */
+.status-col {
+  width: 140px;
+}
+
+.filename-col {
+  width: 35%;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+}
+
+.path-col {
+  width: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.status-cell {
+  text-align: center;
+  padding: 12px 8px;
+}
+
+.path-cell {
+  max-width: 400px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Dark mode adjustments */
+[data-theme="dark"] .unmatched-row.removed {
+  background: rgba(239, 83, 80, 0.1);
+}
+
+[data-theme="dark"] .unmatched-row.added {
+  background: rgba(102, 187, 106, 0.1);
+}

@@ -21,8 +21,8 @@ final class Reporter(config: Config):
     generateHtmlReport(result)
 
   /** Generates batch comparison report */
-  def generateBatchReport(batchResult: BatchResult, outputDir: Path): Unit =
-    val html = HtmlComponents.batchReportTemplate(batchResult)
+  def generateBatchReport(batchResult: BatchResult, outputDir: Path, oldDir: Path, newDir: Path): Unit =
+    val html = HtmlComponents.batchReportTemplate(batchResult, oldDir, newDir)
     writeStringToPath(outputDir.resolve("batch_report.html"), html)
     copyStaticAssets(outputDir)
 

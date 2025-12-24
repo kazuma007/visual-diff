@@ -154,7 +154,7 @@ object Main extends LazyLogging:
     val result = engine.compareAll()
 
     val reporter = new Reporter(config.baseConfig)
-    reporter.generateBatchReport(result, config.baseConfig.outputDir)
+    reporter.generateBatchReport(result, config.baseConfig.outputDir, config.dirOld, config.dirNew)
 
     result
   }
