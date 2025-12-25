@@ -117,6 +117,7 @@ final case class PageDiff(
     suppressedDiffs: Option[SuppressedDiffs] = None,
     existsInOld: Boolean = true,
     existsInNew: Boolean = true,
+    hasDifferences: Boolean,
 )
 
 object PageDiff:
@@ -131,6 +132,8 @@ final case class DiffSummary(
     textDiffCount: Int,
     layoutDiffCount: Int,
     fontDiffCount: Int,
+    hasDifferences: Boolean,
+    isImageComparison: Boolean = false,
 )
 
 object DiffSummary:
@@ -140,17 +143,12 @@ object DiffSummary:
 final case class DiffResult(
     pageDiffs: Seq[PageDiff],
     summary: DiffSummary,
-    isImageComparison: Boolean = false,
 ):
 
-  def hasDifferences: Boolean =
-    pageDiffs.exists { p =>
-      p.visualDiff.exists(_.differenceCount > 0) ||
-      p.colorDiffs.nonEmpty ||
-      p.textDiffs.nonEmpty ||
-      p.layoutDiffs.nonEmpty ||
-      p.fontDiffs.nonEmpty
-    }
+  /** Checks if there are any differences in the entire result.
+    * Uses the hasDifferences field from each PageDiff.
+    */
+  def hasDifferences: Boolean = summary.hasDifferences
 
 object DiffResult:
 

@@ -267,7 +267,7 @@ class DiffEngineSpec extends AnyFunSpec {
       val result = DiffEngine(config).compare()
 
       assert(!result.hasDifferences)
-      assert(result.isImageComparison)
+      assert(result.summary.isImageComparison)
     }
 
     it("detects visual differences in images") {
@@ -280,7 +280,7 @@ class DiffEngineSpec extends AnyFunSpec {
 
       assert(result.hasDifferences)
       assert(result.summary.visualDiffCount > 0)
-      assert(result.isImageComparison)
+      assert(result.summary.isImageComparison)
     }
 
     it("supports all image formats") {
@@ -297,7 +297,7 @@ class DiffEngineSpec extends AnyFunSpec {
         val result = DiffEngine(config).compare()
 
         assert(!result.hasDifferences, s".$ext format failed")
-        assert(result.isImageComparison, s".$ext not marked as image comparison")
+        assert(result.summary.isImageComparison, s".$ext not marked as image comparison")
       }
     }
 
@@ -310,7 +310,7 @@ class DiffEngineSpec extends AnyFunSpec {
       val result = DiffEngine(config).compare()
 
       assert(!result.hasDifferences)
-      assert(result.isImageComparison)
+      assert(result.summary.isImageComparison)
     }
 
     it("compares PDF with image file") {
@@ -321,7 +321,7 @@ class DiffEngineSpec extends AnyFunSpec {
       val config = Config(oldFile = pdf, newFile = img, outputDir = dir)
       val result = DiffEngine(config).compare()
 
-      assert(result.isImageComparison)
+      assert(result.summary.isImageComparison)
     }
 
     it("does not detect text/layout/font diffs in images") {
@@ -362,7 +362,7 @@ class DiffEngineSpec extends AnyFunSpec {
       val result = DiffEngine(config).compare()
 
       assert(!result.hasDifferences)
-      assert(result.isImageComparison)
+      assert(result.summary.isImageComparison)
     }
 
     it("sets isImageComparison flag correctly") {
@@ -372,13 +372,13 @@ class DiffEngineSpec extends AnyFunSpec {
       val img1 = ImageTestHelpers.createImage(dir.resolve("img1.jpg"))
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.jpg"))
       val configImage = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      assert(DiffEngine(configImage).compare().isImageComparison)
+      assert(DiffEngine(configImage).compare().summary.isImageComparison)
 
       // Test with PDFs
       val pdf1 = PdfTestHelpers.createEmptyPdf(dir.resolve("doc1.pdf"))
       val pdf2 = PdfTestHelpers.createEmptyPdf(dir.resolve("doc2.pdf"))
       val configPdf = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir)
-      assert(!DiffEngine(configPdf).compare().isImageComparison)
+      assert(!DiffEngine(configPdf).compare().summary.isImageComparison)
     }
 
     it("generates diff images for image comparisons") {

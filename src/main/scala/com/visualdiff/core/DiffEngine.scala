@@ -6,7 +6,7 @@ import java.nio.file.Path
 import javax.imageio.ImageIO
 
 import scala.collection.mutable.ListBuffer
-import scala.jdk.CollectionConverters.IterableHasAsScala
+import scala.jdk.CollectionConverters._
 
 import com.typesafe.scalalogging.LazyLogging
 import com.visualdiff.models._
@@ -42,8 +42,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
       // Handle PDFs with different page counts by using the maximum
       val maxPages = math.max(oldDoc.getNumberOfPages, newDoc.getNumberOfPages)
       val pageDiffs = (0 until maxPages).map(page => comparePage(oldDoc, newDoc, page))
-      val summary = createSummary(pageDiffs)
-      DiffResult(pageDiffs, summary, config.hasImageInput)
+      val summary = createSummary(pageDiffs, config.hasImageInput)
+      DiffResult(pageDiffs, summary)
     finally
       oldDoc.close()
       newDoc.close()
@@ -93,7 +93,7 @@ final class DiffEngine(config: Config) extends LazyLogging:
     // Visual diff: Pixel-by-pixel comparison of rendered images
     val visualDiff: Option[VisualDiff] =
       if hasOld && hasNew then Some(compareVisual(oldDoc, newDoc, pageNum))
-      else if hasOld != hasNew then Some(VisualDiff(1.0, Int.MaxValue)) // Missing page = 100% different
+      else if (hasOld && !hasNew) || (!hasOld && hasNew) then Some(VisualDiff(1.0, Int.MaxValue)) // Missing page = 100% different
       else None
 
     // Color diff: RGB distance analysis for detecting color changes
@@ -126,6 +126,16 @@ final class DiffEngine(config: Config) extends LazyLogging:
         Some(generateColorDiffImageFromImages(oldDoc, newDoc, pageNum, config.thresholdColor))
       else None
 
+    // Calculate hasDifferences value
+    val hasDifferences =
+      visualDiff.exists(_.differenceCount > 0) ||
+        colorDiffs.nonEmpty ||
+        textDiffs.nonEmpty ||
+        layoutDiffs.nonEmpty ||
+        fontDiffs.nonEmpty ||
+        !hasOld ||
+        !hasNew
+
     PageDiff(
       pageNum + 1, // Convert to 1-based page numbering for user-facing output
       visualDiff,
@@ -140,6 +150,7 @@ final class DiffEngine(config: Config) extends LazyLogging:
       infoNotice,
       existsInOld = hasOld,
       existsInNew = hasNew,
+      hasDifferences = hasDifferences,
     )
 
   /** Creates an informational notice when font differences are detected.
@@ -529,22 +540,20 @@ final class DiffEngine(config: Config) extends LazyLogging:
     ImageIO.write(diffImage, "PNG", config.outputDir.resolve(fileName).toFile)
     fileName
 
-  /** Creates summary statistics from all page-level differences. */
-  private def createSummary(pages: Seq[PageDiff]): DiffSummary =
-    // Count pages with at least one type of difference
-    val pagesWithDiff = pages.count { p =>
-      p.visualDiff.exists(_.pixelDifferenceRatio > config.thresholdPixel) ||
-      p.colorDiffs.nonEmpty ||
-      p.textDiffs.nonEmpty ||
-      p.layoutDiffs.nonEmpty ||
-      p.fontDiffs.nonEmpty
-    }
-
-    val visualCount =
-      pages.count(_.visualDiff.exists(_.pixelDifferenceRatio > config.thresholdPixel))
+  /** Creates summary statistics from all page-level differences.
+    * Uses the hasDifferences field from PageDiff.
+    */
+  private def createSummary(pages: Seq[PageDiff], isImageComparison: Boolean): DiffSummary =
+    // Use the hasDifferences field
+    val pagesWithDiff = pages.count(_.hasDifferences)
+    val visualCount = pages.count(_.visualDiff.exists(_.pixelDifferenceRatio > config.thresholdPixel))
     val colorCount = pages.count(_.colorDiffs.nonEmpty)
     val textCount = pages.map(_.textDiffs.size).sum
     val layoutCount = pages.map(_.layoutDiffs.size).sum
     val fontCount = pages.map(_.fontDiffs.size).sum
-
-    DiffSummary(pages.size, pagesWithDiff, visualCount, colorCount, textCount, layoutCount, fontCount)
+    val hasDifferences = pages.exists(_.hasDifferences)
+    DiffSummary(
+      totalPages = pages.size, pagesWithDiff = pagesWithDiff, visualDiffCount = visualCount,
+      colorDiffCount = colorCount, textDiffCount = textCount, layoutDiffCount = layoutCount, fontDiffCount = fontCount,
+      hasDifferences = hasDifferences, isImageComparison = isImageComparison,
+    )

@@ -177,19 +177,6 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
           logger.error(s"  ✗ Failed: $errorMsg - Stopping batch")
           throw e
 
-  /** Creates summary statistics from all pair results */
-  private def createSummary(results: Seq[PairResult], totalDuration: Duration): BatchSummary =
-    val successful = results.count(_.isSuccess)
-    val successfulWithDiff = results.count(_.hasDifferences)
-    val failed = results.count(!_.isSuccess)
-
-    val totalPages = results.flatMap(_.result).map(_.summary.totalPages).sum
-    val totalDifferences = results.flatMap(_.result).count(_.hasDifferences)
-
-    BatchSummary(
-      results.size, successful, successfulWithDiff, failed, totalPages, totalDifferences, totalDuration,
-    )
-
   /** Logs batch summary to console */
   private def logSummary(summary: BatchSummary): Unit =
     val report =
