@@ -92,7 +92,7 @@ class ReporterSpec extends AnyFunSpec {
 
       val summary = DiffSummary(
         totalPages = 5, pagesWithDiff = 2, visualDiffCount = 1, colorDiffCount = 1, textDiffCount = 3,
-        layoutDiffCount = 2, fontDiffCount = 1,
+        layoutDiffCount = 2, fontDiffCount = 1, hasDifferences = true,
       )
 
       val result = DiffResult(Seq.empty, summary)
@@ -251,7 +251,7 @@ class ReporterSpec extends AnyFunSpec {
       val htmlContent = Files.readString(dir.resolve("report.html"))
 
       assert(htmlContent.contains("image-format-notice"))
-      assert(result.isImageComparison)
+      assert(result.summary.isImageComparison)
     }
   }
 
@@ -280,7 +280,7 @@ class ReporterSpec extends AnyFunSpec {
       )
 
       // minimal PairResult for the one pair
-      val diffSummary = DiffSummary(1, 0, 0, 0, 0, 0, 0)
+      val diffSummary = DiffSummary(1, 0, 0, 0, 0, 0, 0, false)
       val diffResult = DiffResult(Seq.empty, diffSummary)
       val pair = BatchPair(oldPdf, newPdf, relativePath = "common.pdf")
       val pairResult = PairResult(pair, Some(diffResult), None, Duration.ofMillis(10), dir.resolve("pair_001"))
@@ -327,7 +327,7 @@ class ReporterSpec extends AnyFunSpec {
 
     val summary = DiffSummary(
       totalPages = 1, pagesWithDiff = 1, visualDiffCount = 1, colorDiffCount = 1, textDiffCount = 1,
-      layoutDiffCount = 1, fontDiffCount = 1,
+      layoutDiffCount = 1, fontDiffCount = 1, hasDifferences = true,
     )
 
     DiffResult(Seq(pageDiff), summary)

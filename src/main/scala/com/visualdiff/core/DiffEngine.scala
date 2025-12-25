@@ -42,8 +42,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
       // Handle PDFs with different page counts by using the maximum
       val maxPages = math.max(oldDoc.getNumberOfPages, newDoc.getNumberOfPages)
       val pageDiffs = (0 until maxPages).map(page => comparePage(oldDoc, newDoc, page))
-      val summary = createSummary(pageDiffs)
-      DiffResult(pageDiffs, summary, config.hasImageInput)
+      val summary = createSummary(pageDiffs, config.hasImageInput)
+      DiffResult(pageDiffs, summary)
     finally
       oldDoc.close()
       newDoc.close()
@@ -543,14 +543,17 @@ final class DiffEngine(config: Config) extends LazyLogging:
   /** Creates summary statistics from all page-level differences.
     * Uses the hasDifferences field from PageDiff.
     */
-  private def createSummary(pages: Seq[PageDiff]): DiffSummary =
+  private def createSummary(pages: Seq[PageDiff], isImageComparison: Boolean): DiffSummary =
     // Use the hasDifferences field
     val pagesWithDiff = pages.count(_.hasDifferences)
-
     val visualCount = pages.count(_.visualDiff.exists(_.pixelDifferenceRatio > config.thresholdPixel))
     val colorCount = pages.count(_.colorDiffs.nonEmpty)
     val textCount = pages.map(_.textDiffs.size).sum
     val layoutCount = pages.map(_.layoutDiffs.size).sum
     val fontCount = pages.map(_.fontDiffs.size).sum
-
-    DiffSummary(pages.size, pagesWithDiff, visualCount, colorCount, textCount, layoutCount, fontCount)
+    val hasDifferences = pages.exists(_.hasDifferences)
+    DiffSummary(
+      totalPages = pages.size, pagesWithDiff = pagesWithDiff, visualDiffCount = visualCount,
+      colorDiffCount = colorCount, textDiffCount = textCount, layoutDiffCount = layoutCount, fontDiffCount = fontCount,
+      hasDifferences = hasDifferences, isImageComparison = isImageComparison,
+    )
