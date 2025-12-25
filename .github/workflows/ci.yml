@@ -34,5 +34,5 @@ jobs:
       - name: Compile
         run: sbt compile Test/compile
 
-      - name: Run tests
-        run: sbt test
+      - name: Run tests (excluding slow benchmarks)
+        run: sbt "testOnly * -- -l org.scalatest.tags.Slow"
