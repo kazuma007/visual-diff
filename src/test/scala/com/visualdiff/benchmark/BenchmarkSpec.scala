@@ -3,7 +3,9 @@ package com.visualdiff.benchmark
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+
 import scala.compiletime.uninitialized
+
 import com.visualdiff.core.DiffBatchEngine
 import com.visualdiff.helper.TestDataGenerator
 import com.visualdiff.helper.benchmark.PerformanceHelpers
