@@ -34,7 +34,7 @@ jobs:
       - name: Get JAR path
         id: jar
         run: |
-          JAR_PATH=$(find target -name "*.jar" -path "*/scala-*/*assembly*.jar" | head -n 1)
+          JAR_PATH=$(find target/scala-* -name "*.jar" -type f | head -n 1)
           echo "path=$JAR_PATH" >> $GITHUB_OUTPUT
           echo "name=$(basename $JAR_PATH)" >> $GITHUB_OUTPUT
 
