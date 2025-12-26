@@ -13,18 +13,24 @@ import org.scalatest.prop.TableDrivenPropertyChecks._
 
 class DiffEngineSpec extends AnyFunSpec {
 
+  /** Helper to extract DiffResult from Either or fail the test */
+  private def compareAndExtract(config: Config) =
+    DiffEngine(config).compare() match
+      case Right(result) => result
+      case Left(error) => fail(s"Comparison failed: ${error.message}", error.cause.orNull)
+
   describe("visual differences") {
     it("detects pixel changes") {
       val dir = Files.createTempDirectory("diff_visual_test")
       val pdf1 = PdfTestHelpers.createPdf(dir.resolve("v1.pdf"), "Hello World", Color.WHITE)
       val pdf2 = PdfTestHelpers.createPdf(dir.resolve("v2.pdf"), "Hello World", Color.LIGHT_GRAY)
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir, thresholdPixel = 0.0)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(result.hasDifferences)
       assert(result.summary.visualDiffCount > 0)
       assert(result.pageDiffs.head.visualDiff.isDefined)
-
       result.pageDiffs.head.visualDiff match {
         case Some(vd) => assert(vd.pixelDifferenceRatio > 0.0)
         case None => fail("visualDiff should exist")
@@ -44,7 +50,7 @@ class DiffEngineSpec extends AnyFunSpec {
 
       forAll(thresholdCases) { (_, threshold, expected) =>
         val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir, thresholdPixel = threshold)
-        assert(DiffEngine(config).compare().summary.visualDiffCount == expected)
+        assert(compareAndExtract(config).summary.visualDiffCount == expected)
       }
     }
 
@@ -53,9 +59,10 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf1 = PdfTestHelpers.createPdf(dir.resolve("ig1.pdf"), "Test", Color.WHITE)
       val pdf2 = PdfTestHelpers.createPdf(dir.resolve("ig2.pdf"), "TestT", Color.LIGHT_GRAY)
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir, thresholdPixel = 0.0)
-      val result = DiffEngine(config).compare()
 
+      val result = compareAndExtract(config)
       val pageDiff = result.pageDiffs.head
+
       assert(pageDiff.oldImagePath.isDefined)
       assert(pageDiff.newImagePath.isDefined)
       assert(pageDiff.diffImagePath.isDefined)
@@ -71,11 +78,11 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf1 = PdfTestHelpers.createPdf(dir.resolve("t1.pdf"), "TestB C", Color.WHITE)
       val pdf2 = PdfTestHelpers.createPdf(dir.resolve("t2.pdf"), "TestAB", Color.WHITE)
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(result.hasDifferences)
       assert(result.summary.textDiffCount == 3)
-
       val diffs = result.pageDiffs.flatMap(_.textDiffs)
       assert(diffs.filter(_.diffType == Added).flatMap(_.newText) == Seq("A"))
       assert(diffs.filter(_.diffType == Removed).flatMap(_.oldText) == Seq(" ", "C"))
@@ -93,7 +100,7 @@ class DiffEngineSpec extends AnyFunSpec {
       )
 
       forAll(testCases) { (_, config) =>
-        assert(!DiffEngine(config).compare().hasDifferences)
+        assert(!compareAndExtract(config).hasDifferences)
       }
     }
   }
@@ -131,7 +138,7 @@ class DiffEngineSpec extends AnyFunSpec {
       )
 
       forAll(fontCases) { (_, config) =>
-        val result = DiffEngine(config).compare()
+        val result = compareAndExtract(config)
         assert(result.summary.fontDiffCount > 0)
       }
     }
@@ -142,7 +149,7 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf2 = PdfTestHelpers.createPdfWithFont(dir.resolve("fi2.pdf"), "Same", Standard14Fonts.FontName.HELVETICA)
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir)
 
-      assert(DiffEngine(config).compare().summary.fontDiffCount == 0)
+      assert(compareAndExtract(config).summary.fontDiffCount == 0)
     }
   }
 
@@ -161,8 +168,8 @@ class DiffEngineSpec extends AnyFunSpec {
         val pdf1 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("c1.pdf"), "Test", oldColor)
         val pdf2 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("c2.pdf"), "Test", newColor)
         val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir, thresholdColor = threshold)
-        val result = DiffEngine(config).compare()
 
+        val result = compareAndExtract(config)
         assert(result.summary.colorDiffCount == expected)
       }
     }
@@ -172,9 +179,10 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf1 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("ci1.pdf"), "Test", Color.RED)
       val pdf2 = PdfTestHelpers.createPdfWithTextColor(dir.resolve("ci2.pdf"), "Test", Color.BLUE)
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir, thresholdColor = 30.0)
-      val result = DiffEngine(config).compare()
 
+      val result = compareAndExtract(config)
       val pageDiff = result.pageDiffs.head
+
       assert(pageDiff.colorImagePath.isDefined)
       assert(Files.exists(dir.resolve(pageDiff.colorImagePath.get)))
     }
@@ -186,11 +194,11 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf1 = PdfTestHelpers.createPdf(dir.resolve("l1.pdf"), "Moving Text", Color.WHITE)
       val pdf2 = PdfTestHelpers.createPdf(dir.resolve("l2.pdf"), "Moving Text", Color.WHITE, x = 120, y = 120)
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir, thresholdLayout = 5.0)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(result.hasDifferences)
       assert(result.summary.layoutDiffCount > 0)
-
       val layoutDiffs = result.pageDiffs.flatMap(_.layoutDiffs)
       layoutDiffs.headOption match {
         case Some(diff) =>
@@ -207,7 +215,7 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf2 = PdfTestHelpers.createPdf(dir.resolve("lt2.pdf"), "Text", Color.WHITE, x = 101, y = 101)
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir, thresholdLayout = 5.0)
 
-      assert(DiffEngine(config).compare().summary.layoutDiffCount == 0)
+      assert(compareAndExtract(config).summary.layoutDiffCount == 0)
     }
   }
 
@@ -217,11 +225,11 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf1 = PdfTestHelpers.createMultiPagePdf(dir.resolve("pc1.pdf"), Seq("Page 1", "Page 2"))
       val pdf2 = PdfTestHelpers.createMultiPagePdf(dir.resolve("pc2.pdf"), Seq("Page 1", "Page 2", "Page 3"))
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(result.summary.totalPages == 3)
       assert(result.hasDifferences)
-
       result.pageDiffs.find(_.pageNumber == 3) match {
         case Some(page) =>
           page.visualDiff match {
@@ -236,7 +244,8 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_identical")
       val pdf = PdfTestHelpers.createPdf(dir.resolve("same.pdf"), "Exact Match", Color.WHITE)
       val config = Config(oldFile = pdf, newFile = pdf, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(!result.hasDifferences)
       assert(result.summary.visualDiffCount == 0)
@@ -250,7 +259,8 @@ class DiffEngineSpec extends AnyFunSpec {
       val pdf1 = PdfTestHelpers.createEmptyPdf(dir.resolve("e1.pdf"))
       val pdf2 = PdfTestHelpers.createEmptyPdf(dir.resolve("e2.pdf"))
       val config = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(!result.hasDifferences)
       assert(result.summary.totalPages == 1)
@@ -262,9 +272,9 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_jpg_identical")
       val img1 = ImageTestHelpers.createImage(dir.resolve("img1.jpg"), color = Color.WHITE)
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.jpg"), color = Color.WHITE)
-
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(!result.hasDifferences)
       assert(result.summary.isImageComparison)
@@ -274,9 +284,9 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_image_diff")
       val img1 = ImageTestHelpers.createImage(dir.resolve("img1.png"), color = Color.WHITE)
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.png"), color = Color.LIGHT_GRAY)
-
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir, thresholdPixel = 0.0)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(result.hasDifferences)
       assert(result.summary.visualDiffCount > 0)
@@ -292,9 +302,9 @@ class DiffEngineSpec extends AnyFunSpec {
         val dir = Files.createTempDirectory(s"diff_format_$ext")
         val img1 = ImageTestHelpers.createImage(dir.resolve(s"img1.$ext"), color = Color.WHITE)
         val img2 = ImageTestHelpers.createImage(dir.resolve(s"img2.$ext"), color = Color.WHITE)
-
         val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-        val result = DiffEngine(config).compare()
+
+        val result = compareAndExtract(config)
 
         assert(!result.hasDifferences, s".$ext format failed")
         assert(result.summary.isImageComparison, s".$ext not marked as image comparison")
@@ -305,9 +315,9 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_mixed_formats")
       val img1 = ImageTestHelpers.createImage(dir.resolve("img1.jpg"), color = Color.WHITE)
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.png"), color = Color.WHITE)
-
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(!result.hasDifferences)
       assert(result.summary.isImageComparison)
@@ -317,9 +327,9 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_pdf_vs_image")
       val pdf = PdfTestHelpers.createPdf(dir.resolve("doc.pdf"), "Test", Color.WHITE)
       val img = ImageTestHelpers.createImageWithText(dir.resolve("img.png"), "Test")
-
       val config = Config(oldFile = pdf, newFile = img, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(result.summary.isImageComparison)
     }
@@ -328,15 +338,14 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_image_no_text")
       val img1 = ImageTestHelpers.createImageWithText(dir.resolve("img1.png"), "Hello World")
       val img2 = ImageTestHelpers.createImageWithText(dir.resolve("img2.png"), "Goodbye World")
-
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       // Images don't have text layers
       assert(result.summary.textDiffCount == 0)
       assert(result.summary.layoutDiffCount == 0)
       assert(result.summary.fontDiffCount == 0)
-
       // But visual differences should be detected
       assert(result.summary.visualDiffCount > 0)
     }
@@ -345,9 +354,9 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_image_color")
       val img1 = ImageTestHelpers.createImageWithShape(dir.resolve("img1.png"), shapeColor = Color.RED)
       val img2 = ImageTestHelpers.createImageWithShape(dir.resolve("img2.png"), shapeColor = Color.BLUE)
-
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir, thresholdColor = 30.0)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(result.hasDifferences)
       assert(result.summary.colorDiffCount > 0)
@@ -357,9 +366,9 @@ class DiffEngineSpec extends AnyFunSpec {
       val dir = Files.createTempDirectory("diff_uppercase_ext")
       val img1 = ImageTestHelpers.createImage(dir.resolve("IMG1.JPG"), color = Color.WHITE)
       val img2 = ImageTestHelpers.createImage(dir.resolve("IMG2.PNG"), color = Color.WHITE)
-
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+
+      val result = compareAndExtract(config)
 
       assert(!result.hasDifferences)
       assert(result.summary.isImageComparison)
@@ -372,23 +381,23 @@ class DiffEngineSpec extends AnyFunSpec {
       val img1 = ImageTestHelpers.createImage(dir.resolve("img1.jpg"))
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.jpg"))
       val configImage = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      assert(DiffEngine(configImage).compare().summary.isImageComparison)
+      assert(compareAndExtract(configImage).summary.isImageComparison)
 
       // Test with PDFs
       val pdf1 = PdfTestHelpers.createEmptyPdf(dir.resolve("doc1.pdf"))
       val pdf2 = PdfTestHelpers.createEmptyPdf(dir.resolve("doc2.pdf"))
       val configPdf = Config(oldFile = pdf1, newFile = pdf2, outputDir = dir)
-      assert(!DiffEngine(configPdf).compare().summary.isImageComparison)
+      assert(!compareAndExtract(configPdf).summary.isImageComparison)
     }
 
     it("generates diff images for image comparisons") {
       val dir = Files.createTempDirectory("diff_image_output")
       val (img1, img2) = ImageTestHelpers.createImagePair(dir.resolve("img1.jpg"), dir.resolve("img2.jpg"))
-
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir, thresholdPixel = 0.0)
-      val result = DiffEngine(config).compare()
 
+      val result = compareAndExtract(config)
       val pageDiff = result.pageDiffs.head
+
       assert(pageDiff.oldImagePath.isDefined)
       assert(pageDiff.newImagePath.isDefined)
       assert(pageDiff.diffImagePath.isDefined)

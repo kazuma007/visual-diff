@@ -14,6 +14,12 @@ import upickle.default.read
 
 class ReporterSpec extends AnyFunSpec {
 
+  /** Helper to extract DiffResult from Either or fail the test */
+  private def compareAndExtract(config: Config) =
+    DiffEngine(config).compare() match
+      case Right(result) => result
+      case Left(error) => fail(s"Comparison failed: ${error.message}", error.cause.orNull)
+
   describe("Reporter - single comparison") {
 
     it("generates JSON report with correct structure") {
@@ -136,7 +142,7 @@ class ReporterSpec extends AnyFunSpec {
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.png"))
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+      val result = compareAndExtract(config)
       val reporter = new Reporter(config)
 
       reporter.generateReports(result)
@@ -181,7 +187,7 @@ class ReporterSpec extends AnyFunSpec {
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.jpg"))
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+      val result = compareAndExtract(config)
       val reporter = new Reporter(config)
 
       reporter.generateReports(result)
@@ -203,7 +209,7 @@ class ReporterSpec extends AnyFunSpec {
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.bmp"))
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+      val result = compareAndExtract(config)
       val reporter = new Reporter(config)
 
       reporter.generateReports(result)
@@ -223,7 +229,7 @@ class ReporterSpec extends AnyFunSpec {
       val img2 = ImageTestHelpers.createImage(dir.resolve("img2.png"))
 
       val config = Config(oldFile = img1, newFile = img2, outputDir = dir)
-      val result = DiffEngine(config).compare()
+      val result = compareAndExtract(config)
       val reporter = new Reporter(config)
 
       reporter.generateReports(result)
@@ -243,7 +249,7 @@ class ReporterSpec extends AnyFunSpec {
       val img = ImageTestHelpers.createImageWithText(dir.resolve("img.png"), "Test")
 
       val config = Config(oldFile = pdf, newFile = img, outputDir = dir)
-      val result = DiffEngine(config).compare()
+      val result = compareAndExtract(config)
       val reporter = new Reporter(config)
 
       reporter.generateReports(result)

@@ -2,11 +2,14 @@ package com.visualdiff.core
 
 import java.awt.Color
 import java.awt.image.BufferedImage
+import java.nio.file.Files
 import java.nio.file.Path
 import javax.imageio.ImageIO
 
 import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters._
+import scala.util.Try
+import scala.util.Using
 
 import com.typesafe.scalalogging.LazyLogging
 import com.visualdiff.models._
@@ -34,54 +37,79 @@ import org.apache.pdfbox.text.TextPosition
   */
 final class DiffEngine(config: Config) extends LazyLogging:
 
-  /** Compares two PDF documents page-by-page and returns comprehensive diff results. */
-  def compare(): DiffResult =
-    val oldDoc = loadDocument(config.oldFile)
-    val newDoc = loadDocument(config.newFile)
-    try
-      // Handle PDFs with different page counts by using the maximum
-      val maxPages = math.max(oldDoc.getNumberOfPages, newDoc.getNumberOfPages)
-      val pageDiffs = (0 until maxPages).map(page => comparePage(oldDoc, newDoc, page))
-      val summary = createSummary(pageDiffs, config.hasImageInput)
-      DiffResult(pageDiffs, summary)
-    finally
-      oldDoc.close()
-      newDoc.close()
+  /** Compares two PDF documents page-by-page and returns comprehensive diff results.
+    * Returns Either with error details or successful DiffResult.
+    */
+  def compare(): Either[DiffEngineError, DiffResult] =
+    Using.Manager { use =>
+      for
+        oldDoc <- loadDocument(config.oldFile).map(use.apply)
+        newDoc <- loadDocument(config.newFile).map(use.apply)
+      yield
+        val maxPages = math.max(oldDoc.getNumberOfPages, newDoc.getNumberOfPages)
+        val pageDiffs = (0 until maxPages).map(page => comparePage(oldDoc, newDoc, page))
+        val summary = createSummary(pageDiffs, config.hasImageInput)
+        DiffResult(pageDiffs, summary)
+    }.toEither.fold(
+      error => Left(DiffEngineError.ComparisonError(error)),
+      result => result,
+    )
 
-  /** Loads a document, converting images to PDF if necessary. */
-  private def loadDocument(path: Path): PDDocument =
-    ImageFormat.fromPath(path) match
-      case Some(format) =>
-        logger.info(s"Detected ${format.displayName} image file, converting to PDF: $path")
-        convertImageToPdf(path.toFile)
-      case None =>
-        Loader.loadPDF(path.toFile)
+  /** Loads a document, converting images to PDF if necessary.
+    * Returns Either with error details or loaded PDDocument.
+    */
+  private def loadDocument(path: Path): Either[DiffEngineError, PDDocument] =
+    if !Files.exists(path) then Left(DiffEngineError.FileNotFound(path))
+    else
+      ImageFormat.fromPath(path) match
+        case Some(format) =>
+          logger.info(s"Detected ${format.displayName} image file, converting to PDF: $path")
+          convertImageToPdf(path.toFile, path.toString)
+        case None =>
+          Try(Loader.loadPDF(path.toFile)).toEither.left.map(DiffEngineError.DocumentLoadError(path, _))
 
-  /** Converts an image file to a single-page PDF document. */
-  private def convertImageToPdf(imageFile: java.io.File): PDDocument =
-    val doc = new PDDocument()
-    try
-      val bufferedImage = ImageIO.read(imageFile)
+  /** Converts an image file to a single-page PDF document.
+    * Returns Either with error details or converted PDDocument.
+    */
+  private def convertImageToPdf(
+      imageFile: java.io.File,
+      imagePath: String,
+  ): Either[DiffEngineError, PDDocument] =
+    val result = for
+      bufferedImage <- Try(ImageIO.read(imageFile)).toEither.left.map(DiffEngineError.ImageReadError(imagePath, _))
+      doc <- createPdfFromImage(bufferedImage, imageFile, imagePath)
+    yield doc
 
-      // Create a page with dimensions matching the image
+    result.left.map { error =>
+      logger.error(s"Failed to convert image to PDF: $imagePath", error.cause.orNull)
+      error
+    }
+
+  /** Creates a PDF document from a BufferedImage.
+    * Helper method to break down convertImageToPdf complexity.
+    */
+  private def createPdfFromImage(
+      bufferedImage: BufferedImage,
+      imageFile: java.io.File,
+      imagePath: String,
+  ): Either[DiffEngineError, PDDocument] = {
+    Try {
+      val doc = new PDDocument()
       val width = bufferedImage.getWidth
       val height = bufferedImage.getHeight
       val page = new PDPage(new PDRectangle(width, height))
       doc.addPage(page)
-
-      // Add the image to the PDF
       val pdImage = PDImageXObject.createFromFile(imageFile.getAbsolutePath, doc)
-      val contentStream = new PDPageContentStream(doc, page)
-      try
-        // Draw image at full page size
+
+      Using.resource(new PDPageContentStream(doc, page)) { contentStream =>
         contentStream.drawImage(pdImage, 0, 0, width, height)
-      finally
-        contentStream.close()
+      }
+
       doc
-    catch
-      case e: Exception =>
-        doc.close()
-        throw new RuntimeException(s"Failed to convert image to PDF: ${e.getMessage}", e)
+    }.toEither.left.map { e =>
+      DiffEngineError.ImageConversionError(imagePath, e)
+    }
+  }
 
   /** Performs comprehensive comparison of a single page across all difference dimensions.
     * Detects all differences without suppression and adds informational notice when font changes exist.
@@ -246,7 +274,7 @@ final class DiffEngine(config: Config) extends LazyLogging:
         x += 1
       y += 1
 
-    // Limit to top 200 most significant differences for JSON/HTML report
+    // Return only top 200 most significant color differences to limit JSON size
     colorDiffs.sortBy(-_.distance).take(200).toSeq
 
   /** Extracts RGB components from packed integer color value.
@@ -264,10 +292,10 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * Range: [0, 441.67] where 441.67 = sqrt(255² + 255² + 255²)
     */
   private def calculateColorDistance(c1: RgbColor, c2: RgbColor): Double =
-    val dr = c2.r - c1.r
-    val dg = c2.g - c1.g
-    val db = c2.b - c1.b
-    math.sqrt(dr * dr + dg * dg + db * db)
+    val deltaRed = c2.r - c1.r
+    val deltaGreen = c2.g - c1.g
+    val deltaBlue = c2.b - c1.b
+    math.sqrt(deltaRed * deltaRed + deltaGreen * deltaGreen + deltaBlue * deltaBlue)
 
   /** Simultaneously detects text content changes and layout shifts.
     *
@@ -392,21 +420,30 @@ final class DiffEngine(config: Config) extends LazyLogging:
       val page = doc.getPage(pageNum)
       Option(page.getResources).map { resources =>
         resources.getFontNames.asScala.flatMap { fontName =>
-          Option(resources.getFont(fontName)).flatMap { font =>
-            try
-              val name = Option(font.getName).getOrElse(fontName.getName)
-              val isEmbedded = font.isEmbedded
-              val isOutlined = isType3OrOutlined(font)
-              Some(name -> FontInfo(name, isEmbedded, isOutlined))
-            catch
-              case e: Exception =>
-                logger.debug(
-                  s"Skipping font '${fontName.getName}' on page ${pageNum + 1}: ${e.getMessage}",
-                )
-                None
-          }
+          extractSingleFont(resources.getFont(fontName), fontName, pageNum) match
+            case Right(fontInfo) => Some(fontInfo)
+            case Left(error) =>
+              logger.debug(error.message)
+              None
         }.toMap
       }.getOrElse(Map.empty)
+
+  /** Extracts information from a single font, returning Either for error handling. */
+  private def extractSingleFont(
+      font: PDFont,
+      fontName: org.apache.pdfbox.cos.COSName,
+      pageNum: Int,
+  ): Either[DiffEngineError, (String, FontInfo)] =
+    Try {
+      Option(font).map { _ =>
+        val name = Option(font.getName).getOrElse(fontName.getName)
+        val isEmbedded = font.isEmbedded
+        val isOutlined = isType3OrOutlined(font)
+        name -> FontInfo(name, isEmbedded, isOutlined)
+      }.getOrElse(throw new NoSuchElementException("Font is null"))
+    }.toEither.left.map { e =>
+      DiffEngineError.FontExtractionError(fontName.getName, pageNum + 1, e)
+    }
 
   /** Checks if a font is Type3 (bitmap) or explicitly marked as outline.
     * Type3 fonts use custom rendering procedures and may render differently.
@@ -422,25 +459,32 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * - Font information
     */
   private def extractTextElements(doc: PDDocument, pageNum: Int): Seq[TextElement] =
-    val buf = ListBuffer.empty[TextElement]
+    Try {
+      val buf = ListBuffer.empty[TextElement]
 
-    // Custom PDFTextStripper that captures position data for each character
-    val stripper = new PDFTextStripper() {
-      override def processTextPosition(text: TextPosition): Unit =
-        val bbox = BoundingBox(
-          text.getXDirAdj.toDouble,
-          text.getYDirAdj.toDouble,
-          text.getWidthDirAdj.toDouble,
-          text.getHeightDir.toDouble,
-        )
-        val fontName = Option(text.getFont).flatMap(f => Option(f.getName)).getOrElse("Unknown")
-        buf += TextElement(text.getUnicode, bbox, pageNum + 1, fontName)
-    }
+      // Custom PDFTextStripper that captures position data for each character
+      val stripper = new PDFTextStripper() {
+        override def processTextPosition(text: TextPosition): Unit =
+          val bbox = BoundingBox(
+            text.getXDirAdj.toDouble,
+            text.getYDirAdj.toDouble,
+            text.getWidthDirAdj.toDouble,
+            text.getHeightDir.toDouble,
+          )
 
-    stripper.setStartPage(pageNum + 1)
-    stripper.setEndPage(pageNum + 1)
-    stripper.getText(doc)
-    buf.toSeq
+          val fontName = Option(text.getFont).flatMap(f => Option(f.getName)).getOrElse("Unknown")
+          buf += TextElement(text.getUnicode, bbox, pageNum + 1, fontName)
+      }
+
+      stripper.setStartPage(pageNum + 1)
+      stripper.setEndPage(pageNum + 1)
+      stripper.getText(doc)
+
+      buf.toSeq
+    }.recover { case e: Exception =>
+      logger.error(s"Failed to extract text elements from page ${pageNum + 1}", e)
+      Seq.empty[TextElement]
+    }.getOrElse(Seq.empty)
 
   /** Calculates Euclidean distance between two bounding box positions.
     * Uses top-left corner coordinates (x, y) to determine displacement.
