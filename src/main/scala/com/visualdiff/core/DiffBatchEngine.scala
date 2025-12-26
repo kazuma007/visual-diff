@@ -5,8 +5,15 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.Executors
 
+import scala.concurrent._
+import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
+import scala.util.control.NonFatal
 
 import com.typesafe.scalalogging.LazyLogging
 import com.visualdiff.models._
@@ -16,13 +23,26 @@ import com.visualdiff.util.FileUtils
 /** Engine for batch comparison of multiple file pairs.
   *
   * Discovers file pairs by matching filenames between two directories, then executes comparisons
-  * sequentially using the existing DiffEngine.
+  * either sequentially or in parallel based on configuration.
   */
 final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
 
+  // Create ExecutionContext based on Config.parallelism setting
+  private given ExecutionContext =
+    if batchConfig.enableParallel then
+      ExecutionContext.fromExecutorService(
+        Executors.newWorkStealingPool(batchConfig.parallelism),
+      )
+    else ExecutionContext.global
+
+  /** Compares all discovered file pairs and returns batch result with performance metrics */
   def compareAll(): BatchResult =
     val startTime = Instant.now()
     logger.info(s"Starting batch comparison: ${batchConfig.dirOld} vs ${batchConfig.dirNew}")
+
+    // Log execution mode
+    if batchConfig.enableParallel then logger.info(s"Parallel mode enabled with ${batchConfig.parallelism} worker(s)")
+    else logger.info("Sequential mode enabled")
 
     // 1. Discover file pairs and unmatched files
     val (pairs, unmatchedOld, unmatchedNew) = discoverPairs()
@@ -42,22 +62,69 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
         unmatchedNew,
       )
 
-    // 2. Execute comparisons sequentially
-    val results = pairs.zipWithIndex.map { case (pair, index) =>
-      comparePair(pair, index + 1, pairs.size)
-    }
+    // 2. Execute comparisons (sequential or parallel based on config)
+    val resultsFuture =
+      if batchConfig.enableParallel then compareParallel(pairs)
+      else Future.successful(compareSequential(pairs))
+
+    val results = Try {
+      val timeout = calculateTimeout(pairs)
+      Await.result(resultsFuture, timeout)
+    } match
+      case Success(res) => res
+      case Failure(ex: TimeoutException) =>
+        logger.error(s"Batch comparison timed out: ${ex.getMessage}")
+        throw new RuntimeException("Batch comparison exceeded timeout", ex)
+      case Failure(ex) if NonFatal(ex) =>
+        logger.error(s"Batch comparison failed: ${ex.getMessage}", ex)
+        throw new RuntimeException("Batch comparison failed", ex)
+      case Failure(ex) =>
+        logger.error(s"Fatal error in batch comparison: ${ex.getMessage}", ex)
+        throw ex
 
     // 3. Create batch result
     val endTime = Instant.now()
     val totalDuration = Duration.between(startTime, endTime)
     val summary = createSummary(results, totalDuration, unmatchedOld.size, unmatchedNew.size)
-
     val batchResult = BatchResult(results, summary, startTime, endTime, unmatchedOld, unmatchedNew)
 
-    logger.info(s"Batch completed in ${totalDuration.toSeconds}s")
+    logger.info(s"Batch completed in ${totalDuration.toSeconds}s (mode: ${
+        if batchConfig.enableParallel then "parallel" else "sequential"
+      })")
     logSummary(summary)
-
     batchResult
+
+  /** Executes comparisons sequentially (original implementation) */
+  private def compareSequential(pairs: Seq[BatchPair]): Seq[PairResult] =
+    pairs.zipWithIndex.map { case (pair, index) =>
+      comparePair(pair, index + 1, pairs.size)
+    }
+
+  /** Executes comparisons in parallel using thread pool */
+  private def compareParallel(pairs: Seq[BatchPair])(using ec: ExecutionContext): Future[Seq[PairResult]] =
+    val futures = pairs.zipWithIndex.map { case (pair, index) =>
+      Future {
+        comparePair(pair, index + 1, pairs.size)
+      }.recoverWith { case NonFatal(e) =>
+        val duration = Duration.ZERO
+        val errorMsg = s"${e.getClass.getSimpleName}: ${e.getMessage}"
+        logger.error(s"Failed to compare ${pair.oldFile.getFileName}: $errorMsg", e)
+        Future.successful(
+          PairResult(pair, None, Some(errorMsg), duration, Paths.get("")),
+        )
+      }
+    }
+
+    Future.sequence(futures)
+
+  /** Calculates adaptive timeout based on file count with sensible bounds */
+  private def calculateTimeout(pairs: Seq[BatchPair]): FiniteDuration =
+    val baseTimeoutPerFile = 90.seconds
+    val minimumTimeout = 30.seconds
+    val maximumTimeout = 2.hours
+
+    val calculatedTimeout = baseTimeoutPerFile * pairs.size
+    minimumTimeout.max(calculatedTimeout.min(maximumTimeout))
 
   /** Discovers file pairs by matching filenames between old and new directories */
   private def discoverPairs(): (Seq[BatchPair], Seq[Path], Seq[Path]) =
@@ -133,7 +200,12 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
     val startTime = Instant.now()
     val pairName = pair.oldFile.getFileName.toString
 
-    logger.info(s"[$current/$total] Comparing: $pairName")
+    // Thread-safe logging with thread info in parallel mode
+    val threadInfo =
+      if batchConfig.enableParallel then s" [Thread-${Thread.currentThread().threadId()}]"
+      else ""
+
+    logger.info(s"[$current/$total]$threadInfo Comparing: $pairName")
 
     try
       // Create subdirectory for this pair's output
@@ -159,22 +231,22 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
 
       val duration = Duration.between(startTime, Instant.now())
       logger.info(
-        s"  ✓ Completed in ${duration.toMillis}ms" +
+        s" ✓$threadInfo Completed in ${duration.toMillis}ms" +
           (if diffResult.hasDifferences then s" (differences found)" else ""),
       )
 
       PairResult(pair, Some(diffResult), None, duration, pairOutputDir)
 
     catch
-      case e: Exception =>
+      case NonFatal(e) =>
         val duration = Duration.between(startTime, Instant.now())
         val errorMsg = s"${e.getClass.getSimpleName}: ${e.getMessage}"
 
         if batchConfig.continueOnError then
-          logger.error(s"  ✗ Failed: $errorMsg")
+          logger.error(s" ✗$threadInfo Failed: $errorMsg")
           PairResult(pair, None, Some(errorMsg), duration, Paths.get(""))
         else
-          logger.error(s"  ✗ Failed: $errorMsg - Stopping batch")
+          logger.error(s" ✗$threadInfo Failed: $errorMsg - Stopping batch")
           throw e
 
   /** Logs batch summary to console */

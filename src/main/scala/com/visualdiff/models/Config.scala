@@ -40,4 +40,11 @@ final case class BatchConfig(
     recursive: Boolean,
     continueOnError: Boolean,
     baseConfig: Config,
+    parallelism: Int = BatchConfig.DefaultParallelism,
+    enableParallel: Boolean = true,
 )
+
+object BatchConfig:
+
+  /** Default parallelism uses available CPU cores minus 1 (to leave resources for system) */
+  val DefaultParallelism: Int = Math.max(1, Runtime.getRuntime.availableProcessors() - 1)

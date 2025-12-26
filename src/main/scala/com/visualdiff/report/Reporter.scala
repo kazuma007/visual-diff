@@ -45,10 +45,15 @@ final class Reporter(config: Config):
 
   /** Copies static assets (CSS/JS) to the specified output directory */
   private def copyStaticAssets(outputDir: Path): Unit =
-    val cssContent = fromResource("report/index.css").mkString
+    // Explicitly use the class's classloader instead of the thread's context classloader.
+    // In parallel mode, worker threads don't have the correct context classloader set,
+    // causing fromResource() to fail with FileNotFoundException when trying to load classpath resources.
+    val classLoader = getClass.getClassLoader
+
+    val cssContent = fromResource("report/index.css", classLoader).mkString
     writeStringToPath(outputDir.resolve("report.css"), cssContent)
 
-    val jsContent = fromResource("report/index.js").mkString
+    val jsContent = fromResource("report/index.js", classLoader).mkString
     writeStringToPath(outputDir.resolve("report.js"), jsContent)
 
   /** Writes string to file relative to config.outputDir */

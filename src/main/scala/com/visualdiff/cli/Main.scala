@@ -50,7 +50,11 @@ object Main extends LazyLogging:
       @arg(doc = "Recursively scan subdirectories (batch mode)")
       recursive: Flag = Flag(),
       @arg(doc = "Continue on error (don't stop batch on single file failure)")
-      continueOnError: Flag = Flag(true),
+      continueOnError: Boolean = true,
+      @arg(doc = "Enable parallel processing for batch mode (default: true)")
+      parallelMode: Boolean = true,
+      @arg(doc = s"Number of parallel workers (default: CPU cores - 1, current: ${BatchConfig.DefaultParallelism})")
+      parallelism: Int = BatchConfig.DefaultParallelism,
   ): Unit =
 
     // Determine mode: batch or single
@@ -92,13 +96,15 @@ object Main extends LazyLogging:
         batchDirOld: Option[String],
         batchDirNew: Option[String],
         recursive: Flag,
-        continueOnError: Flag,
+        continueOnError: Boolean,
     ): Unit =
       val batchConfig = BatchConfig(
         dirOld = Paths.get(batchDirOld.get),
         dirNew = Paths.get(batchDirNew.get),
         recursive = recursive.value,
-        continueOnError = continueOnError.value,
+        continueOnError = continueOnError,
+        enableParallel = parallelMode,
+        parallelism = parallelism,
         baseConfig = Config(
           oldFile = Paths.get("."), // Dummy, not used in batch
           newFile = Paths.get("."), // Dummy, not used in batch

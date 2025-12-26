@@ -83,26 +83,28 @@ java -jar target/scala-3.7.4/visualdiff.jar \
 
 ### Single File Mode
 
-| Option                        | Short | Default    | Description                                                                     |
-|-------------------------------|-------|------------|---------------------------------------------------------------------------------|
-| `--old-file <oldFile>`        |       | (required) | Path to the old/baseline file (PDF or image).                                   |
-| `--new-file <newFile>`        |       | (required) | Path to the new/modified file (PDF or image).                                   |
-| `--out <dir>`                 | `-o`  | `./report` | Sets the output directory for all generated reports.                            |
-| `--thresholdPixel <ratio>`    |       | `0.0`      | Visual diff threshold as a ratio (0.0-1.0). E.g., `0.02` = 2% pixel difference. |
-| `--thresholdLayout <pixels>`  |       | `0.0`      | Layout shift threshold in pixels. Changes above this are flagged (PDF only).    |
-| `--thresholdColor <distance>` |       | `0.0`      | Color difference threshold (0-441 RGB distance). Higher = less sensitive.       |
-| `--failOnDiff`                |       | `false`    | Exit with code 1 if any differences are detected (useful for CI/CD).            |
-| `--dpi <number>`              |       | `150`      | DPI (Dots Per Inch) for rendering to images. Higher = more detail.              |
-| `--ignoreAnnotation`          |       | `false`    | *(Reserved for future use)* Ignore differences in PDF annotations.              |
+| Option                         | Short | Default    | Description                                                                     |
+|--------------------------------|-------|------------|---------------------------------------------------------------------------------|
+| `--old-file <oldFile>`         |       | (required) | Path to the old/baseline file (PDF or image).                                   |
+| `--new-file <newFile>`         |       | (required) | Path to the new/modified file (PDF or image).                                   |
+| `--out <dir>`                  | `-o`  | `./report` | Sets the output directory for all generated reports.                            |
+| `--threshold-pixel <ratio>`    |       | `0.0`      | Visual diff threshold as a ratio (0.0-1.0). E.g., `0.02` = 2% pixel difference. |
+| `--threshold-layout <pixels>`  |       | `0.0`      | Layout shift threshold in pixels. Changes above this are flagged (PDF only).    |
+| `--threshold-color <distance>` |       | `0.0`      | Color difference threshold (0-441 RGB distance). Higher = less sensitive.       |
+| `--failOnDiff`                 |       | `false`    | Exit with code 1 if any differences are detected (useful for CI/CD).            |
+| `--dpi <number>`               |       | `150`      | DPI (Dots Per Inch) for rendering to images. Higher = more detail.              |
+| `--ignore-annotation`          |       | `false`    | *(Reserved for future use)* Ignore differences in PDF annotations.              |
 
 ### Batch Mode Options
 
-| Option                  | Short | Default    | Description                                                     |
-|-------------------------|-------|------------|-----------------------------------------------------------------|
-| `--dir-old <directory>` |       | (required) | Path to directory containing old/baseline files                 |
-| `--dir-new <directory>` |       | (required) | Path to directory containing new/modified files                 |
-| `--recursive`           |       | `false`    | Recursively scan subdirectories                                 |
-| `--continue-on-error`   |       | `true`     | Continue comparing remaining pairs even if one comparison fails |
+| Option                  | Short | Default        | Description                                                            |
+|-------------------------|-------|----------------|------------------------------------------------------------------------|
+| `--dir-old <directory>` |       | (required)     | Path to directory containing old/baseline files                        |
+| `--dir-new <directory>` |       | (required)     | Path to directory containing new/modified files                        |
+| `--recursive`           |       | `false`        | Recursively scan subdirectories                                        |
+| `--continue-on-error`   |       | `true`         | Continue comparing remaining pairs even if one comparison fails        |
+| `--parallel-mode`       |       | `true`         | Enable parallel processing                                             |
+| `--parallelism <n>`     |       | CPU cores - 1  | 1	Number of parallel workers (only used when parallel mode is enabled) |
 
 **Note:** All single-file threshold options work in batch mode and apply to each comparison.
 
