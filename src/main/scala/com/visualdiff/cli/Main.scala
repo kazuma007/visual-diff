@@ -70,69 +70,92 @@ object Main extends LazyLogging:
       "Cannot use both single-file and batch mode simultaneously",
     )
 
-    if isBatchMode then runBatchMode(batchDirOld, batchDirNew, recursive, continueOnError)
-    else runSingleMode(oldFile, newFile)
+    if isBatchMode then
+      runBatchMode(batchDirOld, batchDirNew, out, recursive, continueOnError, parallelMode, parallelism, thresholdPixel,
+        thresholdLayout, thresholdColor, ignoreAnnotation, failOnDiff, dpi)
+    else
+      runSingleMode(oldFile, newFile, out, thresholdPixel, thresholdLayout, thresholdColor, ignoreAnnotation,
+        failOnDiff, dpi)
 
-    def runSingleMode(oldFile: Option[String], newFile: Option[String]): Unit =
-      val config = Config(
-        oldFile = Paths.get(oldFile.get), newFile = Paths.get(newFile.get), outputDir = Paths.get(out),
-        thresholdPixel = thresholdPixel, thresholdLayout = thresholdLayout, thresholdColor = thresholdColor,
-        ignoreAnnotation = ignoreAnnotation.value, failOnDiff = failOnDiff.value, dpi = dpi,
-      )
+  private def runSingleMode(
+      oldFile: Option[String],
+      newFile: Option[String],
+      out: String,
+      thresholdPixel: Double,
+      thresholdLayout: Double,
+      thresholdColor: Double,
+      ignoreAnnotation: Flag,
+      failOnDiff: Flag,
+      dpi: Int,
+  ): Unit =
+    val config = Config(
+      oldFile = Paths.get(oldFile.get), newFile = Paths.get(newFile.get), outputDir = Paths.get(out),
+      thresholdPixel = thresholdPixel, thresholdLayout = thresholdLayout, thresholdColor = thresholdColor,
+      ignoreAnnotation = ignoreAnnotation.value, failOnDiff = failOnDiff.value, dpi = dpi,
+    )
 
-      run(config) match
-        case Success(result) =>
-          if config.failOnDiff && result.hasDifferences then
-            logger.error("Differences detected. Exiting with code 1.")
-            System.exit(1)
-          else
-            logger.info("Done.")
-            System.exit(0)
-        case Failure(ex) =>
-          logger.error(s"Error: ${ex.getMessage}", ex)
+    run(config) match
+      case Success(result) =>
+        if config.failOnDiff && result.hasDifferences then
+          logger.error("Differences detected. Exiting with code 1.")
           System.exit(1)
+        else
+          logger.info("Done.")
+          System.exit(0)
+      case Failure(ex) =>
+        logger.error(s"Error: ${ex.getMessage}", ex)
+        System.exit(1)
 
-    def runBatchMode(
-        batchDirOld: Option[String],
-        batchDirNew: Option[String],
-        recursive: Flag,
-        continueOnError: Boolean,
-    ): Unit =
-      val batchConfig = BatchConfig(
-        dirOld = Paths.get(batchDirOld.get),
-        dirNew = Paths.get(batchDirNew.get),
-        recursive = recursive.value,
-        continueOnError = continueOnError,
-        enableParallel = parallelMode,
-        parallelism = parallelism,
-        baseConfig = Config(
-          oldFile = Paths.get("."), // Dummy, not used in batch
-          newFile = Paths.get("."), // Dummy, not used in batch
-          outputDir = Paths.get(out), thresholdPixel = thresholdPixel, thresholdLayout = thresholdLayout,
-          thresholdColor = thresholdColor, ignoreAnnotation = ignoreAnnotation.value, failOnDiff = failOnDiff.value,
-          dpi = dpi,
-        ),
-      )
+  private def runBatchMode(
+      batchDirOld: Option[String],
+      batchDirNew: Option[String],
+      out: String,
+      recursive: Flag,
+      continueOnError: Boolean,
+      parallelMode: Boolean,
+      parallelism: Int,
+      thresholdPixel: Double,
+      thresholdLayout: Double,
+      thresholdColor: Double,
+      ignoreAnnotation: Flag,
+      failOnDiff: Flag,
+      dpi: Int,
+  ): Unit =
+    val batchConfig = BatchConfig(
+      dirOld = Paths.get(batchDirOld.get),
+      dirNew = Paths.get(batchDirNew.get),
+      recursive = recursive.value,
+      continueOnError = continueOnError,
+      enableParallel = parallelMode,
+      parallelism = parallelism,
+      baseConfig = Config(
+        oldFile = Paths.get("."), // Dummy, not used in batch
+        newFile = Paths.get("."), // Dummy, not used in batch
+        outputDir = Paths.get(out), thresholdPixel = thresholdPixel, thresholdLayout = thresholdLayout,
+        thresholdColor = thresholdColor, ignoreAnnotation = ignoreAnnotation.value, failOnDiff = failOnDiff.value,
+        dpi = dpi,
+      ),
+    )
 
-      runBatch(batchConfig) match
-        case Success(result) =>
-          val hasFailures = result.summary.failed > 0
-          val hasDifferences = result.hasAnyDifferences
+    runBatch(batchConfig) match
+      case Success(result) =>
+        val hasFailures = result.summary.failed > 0
+        val hasDifferences = result.hasAnyDifferences
 
-          if batchConfig.baseConfig.failOnDiff && hasDifferences then
-            logger.error(
-              s"Batch completed: ${result.summary.successfulWithDiff} file(s) have differences",
-            )
-            System.exit(1)
-          else if hasFailures && !batchConfig.continueOnError then
-            logger.error(s"Batch failed: ${result.summary.failed} comparison(s) failed")
-            System.exit(1)
-          else
-            logger.info(s"Batch completed: ${result.summary.totalPairs} pairs processed")
-            System.exit(0)
-        case Failure(ex) =>
-          logger.error(s"Batch error: ${ex.getMessage}", ex)
+        if batchConfig.baseConfig.failOnDiff && hasDifferences then
+          logger.error(
+            s"Batch completed: ${result.summary.successfulWithDiff} file(s) have differences",
+          )
           System.exit(1)
+        else if hasFailures && !batchConfig.continueOnError then
+          logger.error(s"Batch failed: ${result.summary.failed} comparison(s) failed")
+          System.exit(1)
+        else
+          logger.info(s"Batch completed: ${result.summary.totalPairs} pairs processed")
+          System.exit(0)
+      case Failure(ex) =>
+        logger.error(s"Batch error: ${ex.getMessage}", ex)
+        System.exit(1)
 
   def main(args: Array[String]): Unit =
     ParserForMethods(this).runOrExit(args)
@@ -144,7 +167,13 @@ object Main extends LazyLogging:
     Files.createDirectories(config.outputDir)
 
     val engine = new DiffEngine(config)
-    val result = engine.compare()
+
+    // Handle Either result from engine.compare()
+    val result = engine.compare() match
+      case Right(diffResult) => diffResult
+      case Left(error) =>
+        logger.error(s"Comparison failed: ${error.message}", error.cause.orNull)
+        throw new RuntimeException(error.message, error.cause.orNull)
 
     val reporter = new Reporter(config)
     reporter.generateReports(result)

@@ -223,7 +223,12 @@ final class DiffBatchEngine(batchConfig: BatchConfig) extends LazyLogging:
 
       // Run comparison using existing DiffEngine
       val engine = new DiffEngine(pairConfig)
-      val diffResult = engine.compare()
+      val diffResult = engine.compare() match
+        case Right(result) => result
+        case Left(error) =>
+          val errorMsg = s"${error.getClass.getSimpleName}: ${error.message}"
+          logger.error(s"$threadInfo Comparison error: $errorMsg", error.cause.orNull)
+          throw new RuntimeException(errorMsg, error.cause.orNull)
 
       // Generate individual report using Reporter
       val reporter = new Reporter(pairConfig)
