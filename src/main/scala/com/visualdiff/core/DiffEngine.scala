@@ -37,6 +37,8 @@ import org.apache.pdfbox.text.TextPosition
   */
 final class DiffEngine(config: Config) extends LazyLogging:
 
+  private final case class RenderImages(oldImage: BufferedImage, newImage: BufferedImage, minWidth: Int, minHeight: Int)
+
   /** Compares two PDF documents page-by-page and returns comprehensive diff results.
     * Returns Either with error details or successful DiffResult.
     */
@@ -46,8 +48,11 @@ final class DiffEngine(config: Config) extends LazyLogging:
         oldDoc <- loadDocument(config.oldFile).map(use.apply)
         newDoc <- loadDocument(config.newFile).map(use.apply)
       yield
+        val oldRenderer = PDFRenderer(oldDoc)
+        val newRenderer = PDFRenderer(newDoc)
+
         val maxPages = math.max(oldDoc.getNumberOfPages, newDoc.getNumberOfPages)
-        val pageDiffs = (0 until maxPages).map(page => comparePage(oldDoc, newDoc, page))
+        val pageDiffs = (0 until maxPages).map(page => comparePage(oldDoc, newDoc, oldRenderer, newRenderer, page))
         val summary = createSummary(pageDiffs, config.hasImageInput)
         DiffResult(pageDiffs, summary)
     }.toEither.fold(
@@ -114,72 +119,123 @@ final class DiffEngine(config: Config) extends LazyLogging:
   /** Performs comprehensive comparison of a single page across all difference dimensions.
     * Detects all differences without suppression and adds informational notice when font changes exist.
     */
-  private def comparePage(oldDoc: PDDocument, newDoc: PDDocument, pageNum: Int): PageDiff =
+  private def comparePage(
+      oldDoc: PDDocument,
+      newDoc: PDDocument,
+      oldRenderer: PDFRenderer,
+      newRenderer: PDFRenderer,
+      pageNum: Int,
+  ): PageDiff =
     val hasOld = pageNum < oldDoc.getNumberOfPages
     val hasNew = pageNum < newDoc.getNumberOfPages
 
-    // Visual diff: Pixel-by-pixel comparison of rendered images
-    val visualDiff: Option[VisualDiff] =
-      if hasOld && hasNew then Some(compareVisual(oldDoc, newDoc, pageNum))
-      else if (hasOld && !hasNew) || (!hasOld && hasNew) then Some(VisualDiff(1.0, Int.MaxValue)) // Missing page = 100% different
-      else None
+    (hasOld, hasNew) match
+      case (true, true) =>
+        val renderImages = generateRenderImages(oldRenderer, newRenderer, pageNum)
 
-    // Color diff: RGB distance analysis for detecting color changes
-    val colorDiffs: Seq[ColorDiff] =
-      if hasOld && hasNew then compareColors(oldDoc, newDoc, pageNum)
-      else Seq.empty
+        val visualDiff = Some(compareVisual(renderImages))
+        val colorDiffs = compareColors(renderImages)
+        val (textDiffs, layoutDiffs) = compareTextAndLayout(oldDoc, newDoc, pageNum)
+        val fontDiffs = compareFonts(oldDoc, newDoc, pageNum)
 
-    // Text diff: Content additions/removals, Layout diff: Positional shifts
-    val (textDiffs, layoutDiffs) =
-      if hasOld && hasNew then compareTextAndLayout(oldDoc, newDoc, pageNum)
-      else (Seq.empty, Seq.empty)
+        val infoNotice = createInfoNotice(fontDiffs, visualDiff, colorDiffs, layoutDiffs)
 
-    // Font diff: Substitutions, embedding changes, missing fonts
-    val fontDiffs =
-      if hasOld && hasNew then compareFonts(oldDoc, newDoc, pageNum)
-      else Seq.empty
+        val (oldImagePath, newImagePath, diffImagePath) =
+          if visualDiff.exists(_.pixelDifferenceRatio > config.thresholdPixel) then
+            generateVisualDiffImages(renderImages, pageNum)
+          else (None, None, None)
 
-    // Create informational notice if font differences exist
-    val infoNotice = createInfoNotice(fontDiffs, visualDiff, colorDiffs, layoutDiffs)
+        val colorImagePath =
+          if colorDiffs.nonEmpty then
+            Some(generateColorDiffImageFromImages(renderImages, pageNum, config.thresholdColor))
+          else None
 
-    // Generate images for pages with visual differences
-    val (oldImagePath, newImagePath, diffImagePath) = visualDiff
-      .filter(vd => vd.pixelDifferenceRatio > config.thresholdPixel && hasOld && hasNew)
-      .map(_ => generateVisualDiffImages(oldDoc, newDoc, pageNum))
-      .getOrElse((None, None, None))
+        val hasDifferences =
+          visualDiff.exists(_.differenceCount > 0) ||
+            colorDiffs.nonEmpty ||
+            textDiffs.nonEmpty ||
+            layoutDiffs.nonEmpty ||
+            fontDiffs.nonEmpty
 
-    // Generate color diff images
-    val colorImagePath =
-      if colorDiffs.nonEmpty && hasOld && hasNew then
-        Some(generateColorDiffImageFromImages(oldDoc, newDoc, pageNum, config.thresholdColor))
-      else None
+        PageDiff(
+          pageNum + 1,
+          visualDiff,
+          colorDiffs,
+          textDiffs,
+          layoutDiffs,
+          fontDiffs,
+          oldImagePath,
+          newImagePath,
+          diffImagePath,
+          colorImagePath,
+          infoNotice,
+          hasDifferences = hasDifferences,
+        )
 
-    // Calculate hasDifferences value
-    val hasDifferences =
-      visualDiff.exists(_.differenceCount > 0) ||
-        colorDiffs.nonEmpty ||
-        textDiffs.nonEmpty ||
-        layoutDiffs.nonEmpty ||
-        fontDiffs.nonEmpty ||
-        !hasOld ||
-        !hasNew
+      case (true, false) =>
+        // New Page removed
+        PageDiff(
+          pageNum + 1,
+          visualDiff = Some(VisualDiff(1.0, Int.MaxValue)),
+          colorDiffs = Seq.empty,
+          textDiffs = Seq.empty,
+          layoutDiffs = Seq.empty,
+          fontDiffs = Seq.empty,
+          oldImagePath = None,
+          newImagePath = None,
+          diffImagePath = None,
+          colorImagePath = None,
+          suppressedDiffs = None,
+          existsInNew = false,
+          hasDifferences = true,
+        )
 
-    PageDiff(
-      pageNum + 1, // Convert to 1-based page numbering for user-facing output
-      visualDiff,
-      colorDiffs,
-      textDiffs,
-      layoutDiffs,
-      fontDiffs,
-      oldImagePath,
-      newImagePath,
-      diffImagePath,
-      colorImagePath,
-      infoNotice,
-      existsInOld = hasOld,
-      existsInNew = hasNew,
-      hasDifferences = hasDifferences,
-    )
+      case (false, true) =>
+        // New Page added
+        PageDiff(
+          pageNum + 1,
+          visualDiff = Some(VisualDiff(1.0, Int.MaxValue)),
+          colorDiffs = Seq.empty,
+          textDiffs = Seq.empty,
+          layoutDiffs = Seq.empty,
+          fontDiffs = Seq.empty,
+          oldImagePath = None,
+          newImagePath = None,
+          diffImagePath = None,
+          colorImagePath = None,
+          suppressedDiffs = None,
+          existsInOld = false,
+          hasDifferences = true,
+        )
+
+      case (false, false) =>
+        // Should not happen with maxPages = max(oldPages, newPages), but safe fallback
+        PageDiff(
+          pageNum + 1,
+          visualDiff = None,
+          colorDiffs = Seq.empty,
+          textDiffs = Seq.empty,
+          layoutDiffs = Seq.empty,
+          fontDiffs = Seq.empty,
+          oldImagePath = None,
+          newImagePath = None,
+          diffImagePath = None,
+          colorImagePath = None,
+          suppressedDiffs = None,
+          existsInOld = false,
+          existsInNew = false,
+          hasDifferences = false,
+        )
+
+  private def generateRenderImages(oldRenderer: PDFRenderer, newRenderer: PDFRenderer, pageNum: Int): RenderImages =
+    val oldImage = oldRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
+    val newImage = newRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
+
+    // Use minimum dimensions to handle pages with different sizes
+    val width = math.min(oldImage.getWidth, newImage.getWidth)
+    val height = math.min(oldImage.getHeight, newImage.getHeight)
+
+    RenderImages(oldImage = oldImage, newImage = newImage, minWidth = width, minHeight = height)
 
   /** Creates an informational notice when font differences are detected.
     *
@@ -208,15 +264,9 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * 2. Use minimum dimensions if sizes differ
     * 3. Compare RGB values at each pixel coordinate
     */
-  private def compareVisual(oldDoc: PDDocument, newDoc: PDDocument, pageNum: Int): VisualDiff =
-    val oldRenderer = PDFRenderer(oldDoc)
-    val newRenderer = PDFRenderer(newDoc)
-    val oldImage = oldRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-    val newImage = newRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-
-    // Use minimum dimensions to handle pages with different sizes
-    val width = math.min(oldImage.getWidth, newImage.getWidth)
-    val height = math.min(oldImage.getHeight, newImage.getHeight)
+  private def compareVisual(renderImages: RenderImages): VisualDiff =
+    val width = renderImages.minWidth
+    val height = renderImages.minHeight
 
     var diffCount = 0
     val total = width * height
@@ -226,8 +276,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
     while y < height do
       var x = 0
       while x < width do
-        if oldImage.getRGB(x, y) != newImage.getRGB(x, y) then diffCount += 1
-        x                                                                += 1
+        if renderImages.oldImage.getRGB(x, y) != renderImages.newImage.getRGB(x, y) then diffCount += 1
+        x                                                                                          += 1
       y += 1
 
     val ratio = if total == 0 then 0.0 else diffCount.toDouble / total.toDouble
@@ -242,14 +292,9 @@ final class DiffEngine(config: Config) extends LazyLogging:
     *
     * RGB distance range: 0 (identical) to 441.67 (max RGB difference)
     */
-  private def compareColors(oldDoc: PDDocument, newDoc: PDDocument, pageNum: Int): Seq[ColorDiff] =
-    val oldRenderer = PDFRenderer(oldDoc)
-    val newRenderer = PDFRenderer(newDoc)
-    val oldImage = oldRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-    val newImage = newRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-
-    val width = math.min(oldImage.getWidth, newImage.getWidth)
-    val height = math.min(oldImage.getHeight, newImage.getHeight)
+  private def compareColors(renderImages: RenderImages): Seq[ColorDiff] =
+    val width = renderImages.minWidth
+    val height = renderImages.minHeight
 
     val colorDiffs = ListBuffer.empty[ColorDiff]
 
@@ -262,8 +307,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
       while x < width do
         // Only sample pixels for JSON storage
         if x % samplingRate == 0 && y % samplingRate == 0 then
-          val oldRGB = oldImage.getRGB(x, y)
-          val newRGB = newImage.getRGB(x, y)
+          val oldRGB = renderImages.oldImage.getRGB(x, y)
+          val newRGB = renderImages.newImage.getRGB(x, y)
 
           if oldRGB != newRGB then
             val oldColor = extractRgb(oldRGB)
@@ -499,25 +544,19 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * Returns a tuple of (oldImagePath, newImagePath, diffImagePath)
     */
   private def generateVisualDiffImages(
-      oldDoc: PDDocument,
-      newDoc: PDDocument,
+      renderImages: RenderImages,
       pageNum: Int,
   ): (Option[String], Option[String], Option[String]) =
-    val oldRenderer = PDFRenderer(oldDoc)
-    val newRenderer = PDFRenderer(newDoc)
-    val oldImage = oldRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-    val newImage = newRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-
-    val width = math.min(oldImage.getWidth, newImage.getWidth)
-    val height = math.min(oldImage.getHeight, newImage.getHeight)
+    val width = renderImages.minWidth
+    val height = renderImages.minHeight
 
     // Save old image
     val oldFileName = s"old_p${pageNum + 1}.png"
-    ImageIO.write(oldImage, "PNG", config.outputDir.resolve(oldFileName).toFile)
+    ImageIO.write(renderImages.oldImage, "PNG", config.outputDir.resolve(oldFileName).toFile)
 
     // Save new image
     val newFileName = s"new_p${pageNum + 1}.png"
-    ImageIO.write(newImage, "PNG", config.outputDir.resolve(newFileName).toFile)
+    ImageIO.write(renderImages.newImage, "PNG", config.outputDir.resolve(newFileName).toFile)
 
     // Generate diff image with red highlights
     val diff = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
@@ -525,8 +564,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
     while y < height do
       var x = 0
       while x < width do
-        val oldRGB = oldImage.getRGB(x, y)
-        val newRGB = newImage.getRGB(x, y)
+        val oldRGB = renderImages.oldImage.getRGB(x, y)
+        val newRGB = renderImages.newImage.getRGB(x, y)
         if oldRGB != newRGB then diff.setRGB(x, y, Color.RED.getRGB)
         else diff.setRGB(x, y, newRGB)
         x += 1
@@ -541,19 +580,9 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * This method specifically highlights pixels where RGB distance exceeds the threshold,
     * marking them in magenta for easy identification.
     */
-  private def generateColorDiffImageFromImages(
-      oldDoc: PDDocument,
-      newDoc: PDDocument,
-      pageNum: Int,
-      threshold: Double,
-  ): String =
-    val oldRenderer = PDFRenderer(oldDoc)
-    val newRenderer = PDFRenderer(newDoc)
-    val oldImage = oldRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-    val newImage = newRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
-
-    val width = math.min(oldImage.getWidth, newImage.getWidth)
-    val height = math.min(oldImage.getHeight, newImage.getHeight)
+  private def generateColorDiffImageFromImages(renderImages: RenderImages, pageNum: Int, threshold: Double): String =
+    val width = renderImages.minWidth
+    val height = renderImages.minHeight
 
     val diffImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
 
@@ -562,8 +591,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
     while y < height do
       var x = 0
       while x < width do
-        val oldRGB = oldImage.getRGB(x, y)
-        val newRGB = newImage.getRGB(x, y)
+        val oldRGB = renderImages.oldImage.getRGB(x, y)
+        val newRGB = renderImages.newImage.getRGB(x, y)
 
         // Check if this pixel has a color difference exceeding threshold
         if oldRGB != newRGB then
