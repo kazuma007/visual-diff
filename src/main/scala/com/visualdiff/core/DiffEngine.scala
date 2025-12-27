@@ -166,78 +166,37 @@ final class DiffEngine(config: Config) extends LazyLogging:
             Some(generateColorDiffImageFromImages(renderImages, pageNum, config.thresholdColor))
           else None
 
-        val hasDifferences =
-          visualDiff.exists(_.differenceCount > 0) ||
+        PageDiff(
+          pageNumber = pageNum + 1,
+          visualDiff = visualDiff,
+          colorDiffs = colorDiffs,
+          textDiffs = textDiffs,
+          layoutDiffs = layoutDiffs,
+          fontDiffs = fontDiffs,
+          oldImagePath = oldImagePath,
+          newImagePath = newImagePath,
+          diffImagePath = diffImagePath,
+          colorImagePath = colorImagePath,
+          suppressedDiffs = infoNotice,
+          hasDifferences = visualDiff.exists(_.differenceCount > 0) ||
             colorDiffs.nonEmpty ||
             textDiffs.nonEmpty ||
             layoutDiffs.nonEmpty ||
-            fontDiffs.nonEmpty
-
-        PageDiff(
-          pageNum + 1,
-          visualDiff,
-          colorDiffs,
-          textDiffs,
-          layoutDiffs,
-          fontDiffs,
-          oldImagePath,
-          newImagePath,
-          diffImagePath,
-          colorImagePath,
-          infoNotice,
-          hasDifferences = hasDifferences,
+            fontDiffs.nonEmpty,
         )
 
       case (true, false) =>
-        // New Page removed
-        PageDiff(
-          pageNum + 1,
-          visualDiff = Some(VisualDiff(1.0, Int.MaxValue)),
-          colorDiffs = Seq.empty,
-          textDiffs = Seq.empty,
-          layoutDiffs = Seq.empty,
-          fontDiffs = Seq.empty,
-          oldImagePath = None,
-          newImagePath = None,
-          diffImagePath = None,
-          colorImagePath = None,
-          suppressedDiffs = None,
-          existsInNew = false,
-          hasDifferences = true,
-        )
+        // Page removed from new document
+        PageDiff.removed(pageNum + 1)
 
       case (false, true) =>
-        // New Page added
-        PageDiff(
-          pageNum + 1,
-          visualDiff = Some(VisualDiff(1.0, Int.MaxValue)),
-          colorDiffs = Seq.empty,
-          textDiffs = Seq.empty,
-          layoutDiffs = Seq.empty,
-          fontDiffs = Seq.empty,
-          oldImagePath = None,
-          newImagePath = None,
-          diffImagePath = None,
-          colorImagePath = None,
-          suppressedDiffs = None,
-          existsInOld = false,
-          hasDifferences = true,
-        )
+        // Page added in new document
+        PageDiff.added(pageNum + 1)
 
       case (false, false) =>
-        // Should not happen with maxPages = max(oldPages, newPages), but safe fallback
+        // Safe fallback
         PageDiff(
-          pageNum + 1,
-          visualDiff = None,
-          colorDiffs = Seq.empty,
-          textDiffs = Seq.empty,
-          layoutDiffs = Seq.empty,
-          fontDiffs = Seq.empty,
-          oldImagePath = None,
-          newImagePath = None,
-          diffImagePath = None,
-          colorImagePath = None,
-          suppressedDiffs = None,
+          pageNumber = pageNum + 1,
           existsInOld = false,
           existsInNew = false,
           hasDifferences = false,
