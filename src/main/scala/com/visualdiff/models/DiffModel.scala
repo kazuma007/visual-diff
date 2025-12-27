@@ -105,24 +105,38 @@ object SuppressedDiffs:
 
 final case class PageDiff(
     pageNumber: Int,
-    visualDiff: Option[VisualDiff],
-    colorDiffs: Seq[ColorDiff],
-    textDiffs: Seq[TextDiff],
-    layoutDiffs: Seq[LayoutDiff],
-    fontDiffs: Seq[FontDiff],
-    oldImagePath: Option[String],
-    newImagePath: Option[String],
-    diffImagePath: Option[String],
-    colorImagePath: Option[String],
+    visualDiff: Option[VisualDiff] = None,
+    colorDiffs: Seq[ColorDiff] = Seq.empty,
+    textDiffs: Seq[TextDiff] = Seq.empty,
+    layoutDiffs: Seq[LayoutDiff] = Seq.empty,
+    fontDiffs: Seq[FontDiff] = Seq.empty,
+    oldImagePath: Option[String] = None,
+    newImagePath: Option[String] = None,
+    diffImagePath: Option[String] = None,
+    colorImagePath: Option[String] = None,
     suppressedDiffs: Option[SuppressedDiffs] = None,
     existsInOld: Boolean = true,
     existsInNew: Boolean = true,
-    hasDifferences: Boolean,
+    hasDifferences: Boolean = true,
 )
 
 object PageDiff:
 
   given ReadWriter[PageDiff] = macroRW
+
+  def removed(pageNumber: Int): PageDiff =
+    PageDiff(
+      pageNumber = pageNumber,
+      visualDiff = Some(VisualDiff(1.0, Int.MaxValue)),
+      existsInNew = false,
+    )
+
+  def added(pageNumber: Int): PageDiff =
+    PageDiff(
+      pageNumber = pageNumber,
+      visualDiff = Some(VisualDiff(1.0, Int.MaxValue)),
+      existsInOld = false,
+    )
 
 final case class DiffSummary(
     totalPages: Int,
