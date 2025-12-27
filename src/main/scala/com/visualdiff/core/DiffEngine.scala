@@ -37,7 +37,23 @@ import org.apache.pdfbox.text.TextPosition
   */
 final class DiffEngine(config: Config) extends LazyLogging:
 
-  private final case class RenderImages(oldImage: BufferedImage, newImage: BufferedImage, minWidth: Int, minHeight: Int)
+  /** Holds rendered images plus an overlap-region pixel cache for faster comparisons.
+    *
+    * `oldPixels/newPixels` are the packed ARGB ints for the overlap region
+    * [0..minWidth) x [0..minHeight) with scanline stride = minWidth.
+    */
+  final private case class RenderImages(
+      oldImage: BufferedImage,
+      newImage: BufferedImage,
+      minWidth: Int,
+      minHeight: Int,
+      oldPixels: Array[Int],
+      newPixels: Array[Int],
+  )
+
+  private val RedRgb: Int = Color.RED.getRGB
+
+  private val MagentaRgb: Int = Color.MAGENTA.getRGB
 
   /** Compares two PDF documents page-by-page and returns comprehensive diff results.
     * Returns Either with error details or successful DiffResult.
@@ -235,7 +251,14 @@ final class DiffEngine(config: Config) extends LazyLogging:
     val width = math.min(oldImage.getWidth, newImage.getWidth)
     val height = math.min(oldImage.getHeight, newImage.getHeight)
 
-    RenderImages(oldImage = oldImage, newImage = newImage, minWidth = width, minHeight = height)
+    // Bulk read overlap pixels once; reused by visual/color comparisons + diff image generation
+    val oldPixels = oldImage.getRGB(0, 0, width, height, null, 0, width)
+    val newPixels = newImage.getRGB(0, 0, width, height, null, 0, width)
+
+    RenderImages(
+      oldImage = oldImage, newImage = newImage, minWidth = width, minHeight = height, oldPixels = oldPixels,
+      newPixels = newPixels,
+    )
 
   /** Creates an informational notice when font differences are detected.
     *
@@ -262,65 +285,64 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * Process:
     * 1. Render both pages to images at configured DPI
     * 2. Use minimum dimensions if sizes differ
-    * 3. Compare RGB values at each pixel coordinate
+    * 3. Compare packed ARGB ints in a tight loop
     */
   private def compareVisual(renderImages: RenderImages): VisualDiff =
-    val width = renderImages.minWidth
-    val height = renderImages.minHeight
+    val total = renderImages.minWidth * renderImages.minHeight
+    if total == 0 then VisualDiff(0.0, 0)
+    else
+      val oldPixels = renderImages.oldPixels
+      val newPixels = renderImages.newPixels
 
-    var diffCount = 0
-    val total = width * height
+      var diffCount = 0
+      var i = 0
+      while i < total do
+        if oldPixels(i) != newPixels(i) then diffCount += 1
+        i                                              += 1
 
-    // Nested loops for pixel-by-pixel comparison (optimized for performance)
-    var y = 0
-    while y < height do
-      var x = 0
-      while x < width do
-        if renderImages.oldImage.getRGB(x, y) != renderImages.newImage.getRGB(x, y) then diffCount += 1
-        x                                                                                          += 1
-      y += 1
-
-    val ratio = if total == 0 then 0.0 else diffCount.toDouble / total.toDouble
-    VisualDiff(ratio, diffCount)
+      val ratio = diffCount.toDouble / total.toDouble
+      VisualDiff(ratio, diffCount)
 
   /** Detects color changes using RGB Euclidean distance analysis.
     *
-    * Uses sampling strategy to reduce memory usage:
-    * - Samples every 10th pixel for performance
-    * - Calculates RGB distance for changed pixels
+    * Uses sampling strategy to reduce CPU time and JSON output size:
+    * - Iterates only sampled coordinates (x += samplingRate, y += samplingRate)
+    * - Computes distance only where packed pixels differ
     * - Returns top 200 most significant differences
-    *
-    * RGB distance range: 0 (identical) to 441.67 (max RGB difference)
     */
   private def compareColors(renderImages: RenderImages): Seq[ColorDiff] =
     val width = renderImages.minWidth
     val height = renderImages.minHeight
+    if width == 0 || height == 0 then Seq.empty
+    else
+      val oldPixels = renderImages.oldPixels
+      val newPixels = renderImages.newPixels
 
-    val colorDiffs = ListBuffer.empty[ColorDiff]
+      val colorDiffs = ListBuffer.empty[ColorDiff]
 
-    // Sample every 10th pixel to balance detection accuracy with performance/memory
-    val samplingRate = 10
+      // Sample every 10th pixel to balance detection accuracy with performance/memory
+      val samplingRate = 10
 
-    var y = 0
-    while y < height do
-      var x = 0
-      while x < width do
-        // Only sample pixels for JSON storage
-        if x % samplingRate == 0 && y % samplingRate == 0 then
-          val oldRGB = renderImages.oldImage.getRGB(x, y)
-          val newRGB = renderImages.newImage.getRGB(x, y)
+      var y = 0
+      while y < height do
+        val rowBase = y * width
+        var x = 0
+        while x < width do
+          val idx = rowBase + x
+          val oldRGB = oldPixels(idx)
+          val newRGB = newPixels(idx)
 
           if oldRGB != newRGB then
             val oldColor = extractRgb(oldRGB)
             val newColor = extractRgb(newRGB)
             val distance = calculateColorDistance(oldColor, newColor)
-
             if distance > config.thresholdColor then colorDiffs += ColorDiff(x, y, oldColor, newColor, distance)
-        x += 1
-      y += 1
 
-    // Return only top 200 most significant color differences to limit JSON size
-    colorDiffs.sortBy(-_.distance).take(200).toSeq
+          x += samplingRate
+        y += samplingRate
+
+      // Return only top 200 most significant color differences to limit JSON size
+      colorDiffs.sortBy(-_.distance).take(200).toSeq
 
   /** Extracts RGB components from packed integer color value.
     * Java AWT Color format: 0xAARRGGBB (alpha, red, green, blue)
@@ -558,18 +580,20 @@ final class DiffEngine(config: Config) extends LazyLogging:
     val newFileName = s"new_p${pageNum + 1}.png"
     ImageIO.write(renderImages.newImage, "PNG", config.outputDir.resolve(newFileName).toFile)
 
-    // Generate diff image with red highlights
+    // Build diff pixels in bulk (overlap region), then write once
+    val total = width * height
+    val diffPixels = new Array[Int](total)
+    val oldPixels = renderImages.oldPixels
+    val newPixels = renderImages.newPixels
+
+    var i = 0
+    while i < total do
+      if oldPixels(i) != newPixels(i) then diffPixels(i) = RedRgb
+      else diffPixels(i) = newPixels(i)
+      i += 1
+
     val diff = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-    var y = 0
-    while y < height do
-      var x = 0
-      while x < width do
-        val oldRGB = renderImages.oldImage.getRGB(x, y)
-        val newRGB = renderImages.newImage.getRGB(x, y)
-        if oldRGB != newRGB then diff.setRGB(x, y, Color.RED.getRGB)
-        else diff.setRGB(x, y, newRGB)
-        x += 1
-      y += 1
+    diff.setRGB(0, 0, width, height, diffPixels, 0, width)
 
     val diffFileName = s"diff_p${pageNum + 1}.png"
     ImageIO.write(diff, "PNG", config.outputDir.resolve(diffFileName).toFile)
@@ -583,31 +607,29 @@ final class DiffEngine(config: Config) extends LazyLogging:
   private def generateColorDiffImageFromImages(renderImages: RenderImages, pageNum: Int, threshold: Double): String =
     val width = renderImages.minWidth
     val height = renderImages.minHeight
+    val total = width * height
+
+    val diffPixels = new Array[Int](total)
+    val oldPixels = renderImages.oldPixels
+    val newPixels = renderImages.newPixels
+
+    var i = 0
+    while i < total do
+      val oldRGB = oldPixels(i)
+      val newRGB = newPixels(i)
+
+      if oldRGB != newRGB then
+        val oldColor = extractRgb(oldRGB)
+        val newColor = extractRgb(newRGB)
+        val distance = calculateColorDistance(oldColor, newColor)
+        if distance > threshold then diffPixels(i) = MagentaRgb
+        else diffPixels(i) = newRGB
+      else diffPixels(i) = newRGB
+
+      i += 1
 
     val diffImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-
-    // Copy new image as base and mark color differences in magenta
-    var y = 0
-    while y < height do
-      var x = 0
-      while x < width do
-        val oldRGB = renderImages.oldImage.getRGB(x, y)
-        val newRGB = renderImages.newImage.getRGB(x, y)
-
-        // Check if this pixel has a color difference exceeding threshold
-        if oldRGB != newRGB then
-          val oldColor = extractRgb(oldRGB)
-          val newColor = extractRgb(newRGB)
-          val distance = calculateColorDistance(oldColor, newColor)
-
-          if distance > threshold then
-            // Mark with magenta to distinguish from visual diff (red)
-            diffImage.setRGB(x, y, Color.MAGENTA.getRGB)
-          else diffImage.setRGB(x, y, newRGB)
-        else diffImage.setRGB(x, y, newRGB)
-
-        x += 1
-      y += 1
+    diffImage.setRGB(0, 0, width, height, diffPixels, 0, width)
 
     val fileName = s"color_diff_p${pageNum + 1}.png"
     ImageIO.write(diffImage, "PNG", config.outputDir.resolve(fileName).toFile)
