@@ -121,8 +121,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
       imagePath: String,
   ): Either[DiffEngineError, PDDocument] =
     val result = for
-      bufferedImage <- Try(Option(ImageIO.read(imageFile)))
-        .toEither.left.map(DiffEngineError.ImageReadError(imagePath, _))
+      bufferedImage <- Try(Option(ImageIO.read(imageFile))).toEither.left
+        .map(DiffEngineError.ImageReadError(imagePath, _))
         .flatMap {
           case Some(img) => Right(img)
           case None =>
