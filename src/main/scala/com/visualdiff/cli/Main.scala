@@ -158,7 +158,7 @@ object Main extends LazyLogging:
         System.exit(1)
 
   def main(args: Array[String]): Unit =
-    ParserForMethods(this).runOrExit(args)
+    ParserForMethods(this).runOrExit(args.toIndexedSeq)
 
   /** Runs single-file comparison and returns the result */
   def run(config: Config): Try[DiffResult] = Try {

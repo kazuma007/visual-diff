@@ -148,12 +148,12 @@ final class DiffEngine(config: Config) extends LazyLogging:
       val doc = new PDDocument()
       val width = bufferedImage.getWidth
       val height = bufferedImage.getHeight
-      val page = new PDPage(new PDRectangle(width, height))
+      val page = new PDPage(new PDRectangle(width.toFloat, height.toFloat))
       doc.addPage(page)
       val pdImage = PDImageXObject.createFromFile(imageFile.getAbsolutePath, doc)
 
       Using.resource(new PDPageContentStream(doc, page)) { contentStream =>
-        contentStream.drawImage(pdImage, 0, 0, width, height)
+        contentStream.drawImage(pdImage, 0, 0, width.toFloat, height.toFloat)
       }
 
       doc
