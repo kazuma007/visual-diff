@@ -39,21 +39,45 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
   /** Holds rendered images plus an overlap-region pixel cache for faster comparisons.
     *
-    * `oldPixels/newPixels` are the packed ARGB ints for the overlap region
-    * [0..minWidth) x [0..minHeight) with scanline stride = minWidth.
+    * `overlapOldPixels/overlapNewPixels` are the packed ARGB ints for the overlap region
+    * [0..overlapWidth) x [0..overlapHeight) with scanline stride = overlapWidth.
+    *
+    * NOTE: visual diffing counts non-overlap areas as differences. The overlap pixel cache is
+    * used for tight-loop comparisons in the intersection region.
     */
   final private case class RenderImages(
       oldImage: BufferedImage,
       newImage: BufferedImage,
-      minWidth: Int,
-      minHeight: Int,
-      oldPixels: Array[Int],
-      newPixels: Array[Int],
-  )
+      oldWidth: Int,
+      oldHeight: Int,
+      newWidth: Int,
+      newHeight: Int,
+      overlapWidth: Int,
+      overlapHeight: Int,
+      overlapOldPixels: Array[Int],
+      overlapNewPixels: Array[Int],
+  ):
+
+    val oldArea: Long = oldWidth.toLong * oldHeight.toLong
+
+    val newArea: Long = newWidth.toLong * newHeight.toLong
+
+    val overlapArea: Long = overlapWidth.toLong * overlapHeight.toLong
+
+    /** Union area of the two image extents (not the bounding rectangle).
+      * This avoids counting the "both missing" corner when one image is wider and the other is taller.
+      */
+    val unionArea: Long = oldArea + newArea - overlapArea
+
+    val maxWidth: Int = math.max(oldWidth, newWidth)
+
+    val maxHeight: Int = math.max(oldHeight, newHeight)
 
   private val RedRgb: Int = Color.RED.getRGB
 
   private val MagentaRgb: Int = Color.MAGENTA.getRGB
+
+  private val WhiteRgb: Int = Color.WHITE.getRGB
 
   /** Compares two PDF documents page-by-page and returns comprehensive diff results.
     * Returns Either with error details or successful DiffResult.
@@ -97,7 +121,13 @@ final class DiffEngine(config: Config) extends LazyLogging:
       imagePath: String,
   ): Either[DiffEngineError, PDDocument] =
     val result = for
-      bufferedImage <- Try(ImageIO.read(imageFile)).toEither.left.map(DiffEngineError.ImageReadError(imagePath, _))
+      bufferedImage <- Try(Option(ImageIO.read(imageFile))).toEither.left
+        .map(DiffEngineError.ImageReadError(imagePath, _))
+        .flatMap {
+          case Some(img) => Right(img)
+          case None =>
+            Left(DiffEngineError.ImageReadError(imagePath, new IllegalArgumentException("Unsupported image format")))
+        }
       doc <- createPdfFromImage(bufferedImage, imageFile, imagePath)
     yield doc
 
@@ -206,17 +236,27 @@ final class DiffEngine(config: Config) extends LazyLogging:
     val oldImage = oldRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
     val newImage = newRenderer.renderImageWithDPI(pageNum, config.dpi.toFloat, ImageType.RGB)
 
-    // Use minimum dimensions to handle pages with different sizes
-    val width = math.min(oldImage.getWidth, newImage.getWidth)
-    val height = math.min(oldImage.getHeight, newImage.getHeight)
+    val oldW = oldImage.getWidth
+    val oldH = oldImage.getHeight
+    val newW = newImage.getWidth
+    val newH = newImage.getHeight
 
-    // Bulk read overlap pixels once; reused by visual/color comparisons + diff image generation
-    val oldPixels = oldImage.getRGB(0, 0, width, height, null, 0, width)
-    val newPixels = newImage.getRGB(0, 0, width, height, null, 0, width)
+    // Overlap region (intersection) used for fast tight-loop comparisons
+    val overlapW = math.min(oldW, newW)
+    val overlapH = math.min(oldH, newH)
+
+    val overlapOldPixels =
+      if overlapW == 0 || overlapH == 0 then Array.emptyIntArray
+      else oldImage.getRGB(0, 0, overlapW, overlapH, null, 0, overlapW)
+
+    val overlapNewPixels =
+      if overlapW == 0 || overlapH == 0 then Array.emptyIntArray
+      else newImage.getRGB(0, 0, overlapW, overlapH, null, 0, overlapW)
 
     RenderImages(
-      oldImage = oldImage, newImage = newImage, minWidth = width, minHeight = height, oldPixels = oldPixels,
-      newPixels = newPixels,
+      oldImage = oldImage, newImage = newImage, oldWidth = oldW, oldHeight = oldH, newWidth = newW, newHeight = newH,
+      overlapWidth = overlapW, overlapHeight = overlapH, overlapOldPixels = overlapOldPixels,
+      overlapNewPixels = overlapNewPixels,
     )
 
   /** Creates an informational notice when font differences are detected.
@@ -230,7 +270,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
       colorDiffs: Seq[ColorDiff],
       layoutDiffs: Seq[LayoutDiff],
   ): Option[SuppressedDiffs] =
-    if fontDiffs.nonEmpty && (visualDiff.isDefined || colorDiffs.nonEmpty || layoutDiffs.nonEmpty) then
+    val hasVisualDiff = visualDiff.exists(_.differenceCount > 0)
+    if fontDiffs.nonEmpty && (hasVisualDiff || colorDiffs.nonEmpty || layoutDiffs.nonEmpty) then
       Some(
         SuppressedDiffs(
           suppressedVisualDiff = None, // Not suppressing, just informing
@@ -241,41 +282,49 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
   /** Performs pixel-by-pixel comparison of rendered PDF pages.
     *
-    * Process:
-    * 1. Render both pages to images at configured DPI
-    * 2. Use minimum dimensions if sizes differ
-    * 3. Compare packed ARGB ints in a tight loop
+    * Enhancement:
+    * - Differences in non-overlap page regions (size mismatches) are counted as diffs.
+    * - Ratio denominator uses union area (oldArea + newArea - overlapArea), not the bounding rectangle,
+    *   so we don't count the "both missing" corner when one page is wider and the other is taller.
     */
   private def compareVisual(renderImages: RenderImages): VisualDiff =
-    val total = renderImages.minWidth * renderImages.minHeight
-    if total == 0 then VisualDiff(0.0, 0)
+    val union = renderImages.unionArea
+    if union <= 0 then VisualDiff(0.0, 0)
     else
-      val oldPixels = renderImages.oldPixels
-      val newPixels = renderImages.newPixels
+      val overlapTotal = renderImages.overlapWidth * renderImages.overlapHeight
+      val oldPixels = renderImages.overlapOldPixels
+      val newPixels = renderImages.overlapNewPixels
 
-      var diffCount = 0
+      var overlapDiffCount = 0
       var i = 0
-      while i < total do
-        if oldPixels(i) != newPixels(i) then diffCount += 1
-        i                                              += 1
+      while i < overlapTotal do
+        if oldPixels(i) != newPixels(i) then overlapDiffCount += 1
+        i                                                     += 1
 
-      val ratio = diffCount.toDouble / total.toDouble
-      VisualDiff(ratio, diffCount)
+      // Count all pixels that exist only in one image as differences
+      val oldOnly: Long = renderImages.oldArea - renderImages.overlapArea
+      val newOnly: Long = renderImages.newArea - renderImages.overlapArea
+
+      val diffCountLong: Long = overlapDiffCount.toLong + oldOnly + newOnly
+      val ratio = diffCountLong.toDouble / union.toDouble
+      // VisualDiff uses Int differenceCount; clamp if ever huge.
+      val diffCountInt = if diffCountLong > Int.MaxValue.toLong then Int.MaxValue else diffCountLong.toInt
+      VisualDiff(ratio, diffCountInt)
 
   /** Detects color changes using RGB Euclidean distance analysis.
     *
     * Uses sampling strategy to reduce CPU time and JSON output size:
     * - Iterates only sampled coordinates (x += samplingRate, y += samplingRate)
-    * - Computes distance only where packed pixels differ
+    * - Computes distance only where packed pixels differ (in overlap region)
     * - Returns top 200 most significant differences
     */
   private def compareColors(renderImages: RenderImages): Seq[ColorDiff] =
-    val width = renderImages.minWidth
-    val height = renderImages.minHeight
+    val width = renderImages.overlapWidth
+    val height = renderImages.overlapHeight
     if width == 0 || height == 0 then Seq.empty
     else
-      val oldPixels = renderImages.oldPixels
-      val newPixels = renderImages.newPixels
+      val oldPixels = renderImages.overlapOldPixels
+      val newPixels = renderImages.overlapNewPixels
 
       val colorDiffs = ListBuffer.empty[ColorDiff]
 
@@ -522,77 +571,135 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
   /** Generates separate old, new, and diff images for visual comparison.
     *
+    * Enhancement:
+    * - Diff image now covers the bounding rectangle (max width/height).
+    * - Any non-overlap region (where one page has pixels and the other does not) is marked as a difference.
+    *
     * Returns a tuple of (oldImagePath, newImagePath, diffImagePath)
     */
   private def generateVisualDiffImages(
       renderImages: RenderImages,
       pageNum: Int,
   ): (Option[String], Option[String], Option[String]) =
-    val width = renderImages.minWidth
-    val height = renderImages.minHeight
+    Files.createDirectories(config.outputDir)
 
-    // Save old image
+    // Save old image (full size)
     val oldFileName = s"old_p${pageNum + 1}.png"
     ImageIO.write(renderImages.oldImage, "PNG", config.outputDir.resolve(oldFileName).toFile)
 
-    // Save new image
+    // Save new image (full size)
     val newFileName = s"new_p${pageNum + 1}.png"
     ImageIO.write(renderImages.newImage, "PNG", config.outputDir.resolve(newFileName).toFile)
 
-    // Build diff pixels in bulk (overlap region), then write once
-    val total = width * height
-    val diffPixels = new Array[Int](total)
-    val oldPixels = renderImages.oldPixels
-    val newPixels = renderImages.newPixels
+    val maxW = renderImages.maxWidth
+    val maxH = renderImages.maxHeight
 
-    var i = 0
-    while i < total do
-      if oldPixels(i) != newPixels(i) then diffPixels(i) = RedRgb
-      else diffPixels(i) = newPixels(i)
-      i += 1
+    if maxW == 0 || maxH == 0 then
+      // Nothing to render; still return the old/new images.
+      (Some(oldFileName), Some(newFileName), None)
+    else
+      val overlapW = renderImages.overlapWidth
+      val overlapH = renderImages.overlapHeight
+      val overlapOld = renderImages.overlapOldPixels
+      val overlapNew = renderImages.overlapNewPixels
 
-    val diff = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-    diff.setRGB(0, 0, width, height, diffPixels, 0, width)
+      val diffPixels = new Array[Int](maxW * maxH)
+      java.util.Arrays.fill(diffPixels, WhiteRgb)
 
-    val diffFileName = s"diff_p${pageNum + 1}.png"
-    ImageIO.write(diff, "PNG", config.outputDir.resolve(diffFileName).toFile)
+      var y = 0
+      while y < maxH do
+        val rowBase = y * maxW
+        var x = 0
+        while x < maxW do
+          val idxOut = rowBase + x
 
-    (Some(oldFileName), Some(newFileName), Some(diffFileName))
+          val inOld = x < renderImages.oldWidth && y < renderImages.oldHeight
+          val inNew = x < renderImages.newWidth && y < renderImages.newHeight
+
+          if x < overlapW && y < overlapH then
+            val idxOverlap = y * overlapW + x
+            if overlapOld(idxOverlap) != overlapNew(idxOverlap) then diffPixels(idxOut) = RedRgb
+            else diffPixels(idxOut) = overlapNew(idxOverlap)
+          else if inOld || inNew then
+            // Non-overlap pixels (size mismatch): count as difference and mark red
+            diffPixels(idxOut) = RedRgb
+          else
+            // Neither image has pixels here (only possible when one is wider and the other taller)
+            diffPixels(idxOut) = WhiteRgb
+
+          x += 1
+        y += 1
+
+      val diff = new BufferedImage(maxW, maxH, BufferedImage.TYPE_INT_RGB)
+      diff.setRGB(0, 0, maxW, maxH, diffPixels, 0, maxW)
+
+      val diffFileName = s"diff_p${pageNum + 1}.png"
+      ImageIO.write(diff, "PNG", config.outputDir.resolve(diffFileName).toFile)
+
+      (Some(oldFileName), Some(newFileName), Some(diffFileName))
 
   /** Generates a color diff image highlighting color changes in magenta.
-    * This method specifically highlights pixels where RGB distance exceeds the threshold,
-    * marking them in magenta for easy identification.
+    *
+    * Enhancement:
+    * - Output image now covers the bounding rectangle (max width/height).
+    * - Any non-overlap region (where one page has pixels and the other does not) is marked in magenta.
     */
   private def generateColorDiffImageFromImages(renderImages: RenderImages, pageNum: Int, threshold: Double): String =
-    val width = renderImages.minWidth
-    val height = renderImages.minHeight
-    val total = width * height
+    Files.createDirectories(config.outputDir)
 
-    val diffPixels = new Array[Int](total)
-    val oldPixels = renderImages.oldPixels
-    val newPixels = renderImages.newPixels
+    val maxW = renderImages.maxWidth
+    val maxH = renderImages.maxHeight
+    if maxW == 0 || maxH == 0 then
+      val fileName = s"color_diff_p${pageNum + 1}.png"
+      val img = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB)
+      img.setRGB(0, 0, WhiteRgb)
+      ImageIO.write(img, "PNG", config.outputDir.resolve(fileName).toFile)
+      fileName
+    else
+      val overlapW = renderImages.overlapWidth
+      val overlapH = renderImages.overlapHeight
+      val overlapOld = renderImages.overlapOldPixels
+      val overlapNew = renderImages.overlapNewPixels
 
-    var i = 0
-    while i < total do
-      val oldRGB = oldPixels(i)
-      val newRGB = newPixels(i)
+      val diffPixels = new Array[Int](maxW * maxH)
+      java.util.Arrays.fill(diffPixels, WhiteRgb)
 
-      if oldRGB != newRGB then
-        val oldColor = extractRgb(oldRGB)
-        val newColor = extractRgb(newRGB)
-        val distance = calculateColorDistance(oldColor, newColor)
-        if distance > threshold then diffPixels(i) = MagentaRgb
-        else diffPixels(i) = newRGB
-      else diffPixels(i) = newRGB
+      var y = 0
+      while y < maxH do
+        val rowBase = y * maxW
+        var x = 0
+        while x < maxW do
+          val idxOut = rowBase + x
 
-      i += 1
+          val inOld = x < renderImages.oldWidth && y < renderImages.oldHeight
+          val inNew = x < renderImages.newWidth && y < renderImages.newHeight
 
-    val diffImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-    diffImage.setRGB(0, 0, width, height, diffPixels, 0, width)
+          if x < overlapW && y < overlapH then
+            val idxOverlap = y * overlapW + x
+            val oldRGB = overlapOld(idxOverlap)
+            val newRGB = overlapNew(idxOverlap)
 
-    val fileName = s"color_diff_p${pageNum + 1}.png"
-    ImageIO.write(diffImage, "PNG", config.outputDir.resolve(fileName).toFile)
-    fileName
+            if oldRGB != newRGB then
+              val oldColor = extractRgb(oldRGB)
+              val newColor = extractRgb(newRGB)
+              val distance = calculateColorDistance(oldColor, newColor)
+              if distance > threshold then diffPixels(idxOut) = MagentaRgb
+              else diffPixels(idxOut) = newRGB
+            else diffPixels(idxOut) = newRGB
+          else if inOld || inNew then
+            // Size mismatch region: highlight as a "diff" in this view too.
+            diffPixels(idxOut) = MagentaRgb
+          else diffPixels(idxOut) = WhiteRgb
+
+          x += 1
+        y += 1
+
+      val diffImage = new BufferedImage(maxW, maxH, BufferedImage.TYPE_INT_RGB)
+      diffImage.setRGB(0, 0, maxW, maxH, diffPixels, 0, maxW)
+
+      val fileName = s"color_diff_p${pageNum + 1}.png"
+      ImageIO.write(diffImage, "PNG", config.outputDir.resolve(fileName).toFile)
+      fileName
 
   /** Creates summary statistics from all page-level differences.
     * Uses the hasDifferences field from PageDiff.
