@@ -2,11 +2,19 @@ package com.visualdiff.core
 
 import java.awt.Color
 import java.nio.file.Files
+import java.nio.file.Path
+import javax.imageio.ImageIO
+
+import scala.util.Using
 
 import com.visualdiff.helper.ImageTestHelpers
 import com.visualdiff.helper.PdfTestHelpers
 import com.visualdiff.models.Config
 import com.visualdiff.models.DiffType._
+import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.prop.TableDrivenPropertyChecks._
@@ -18,6 +26,24 @@ class DiffEngineSpec extends AnyFunSpec {
     DiffEngine(config).compare() match
       case Right(result) => result
       case Left(error) => fail(s"Comparison failed: ${error.message}", error.cause.orNull)
+
+  /** Create a single-page PDF with an explicit page size and solid background.
+    * This is used to test size-mismatch behavior reliably.
+    */
+  private def createSizedPdf(path: Path, widthPts: Float, heightPts: Float, background: Color): Path =
+    Using.resource(new PDDocument()) { doc =>
+      val page = new PDPage(new PDRectangle(widthPts, heightPts))
+      doc.addPage(page)
+
+      Using.resource(new PDPageContentStream(doc, page)) { cs =>
+        cs.setNonStrokingColor(background)
+        cs.addRect(0f, 0f, widthPts, heightPts)
+        cs.fill()
+      }
+
+      doc.save(path.toFile)
+    }
+    path
 
   describe("visual differences") {
     it("detects pixel changes") {
@@ -69,6 +95,97 @@ class DiffEngineSpec extends AnyFunSpec {
       assert(Files.exists(dir.resolve(pageDiff.oldImagePath.get)))
       assert(Files.exists(dir.resolve(pageDiff.newImagePath.get)))
       assert(Files.exists(dir.resolve(pageDiff.diffImagePath.get)))
+    }
+
+    it("counts non-overlap area as visual diffs when page sizes differ") {
+      val dir = Files.createTempDirectory("diff_size_mismatch_counts")
+      val pdfSmall =
+        createSizedPdf(dir.resolve("small.pdf"), widthPts = 200f, heightPts = 200f, background = Color.WHITE)
+      val pdfWide = createSizedPdf(dir.resolve("wide.pdf"), widthPts = 300f, heightPts = 200f, background = Color.WHITE)
+
+      // Use DPI=72 to make PDF points map cleanly to pixels (1pt ~= 1px) in PDFBox rendering.
+      val config = Config(
+        oldFile = pdfSmall, newFile = pdfWide, outputDir = dir, dpi = 72, thresholdPixel = 0.0, // ensure we write old/new/diff images
+      )
+
+      val result = compareAndExtract(config)
+      val page = result.pageDiffs.head
+      val vd = page.visualDiff.getOrElse(fail("visualDiff should exist"))
+
+      // Non-overlap area should be counted as diff.
+      assert(vd.differenceCount > 0)
+      assert(vd.pixelDifferenceRatio > 0.0)
+
+      // Sanity-check ratio against the actual rendered image sizes written to disk.
+      val oldImg = ImageIO.read(dir.resolve(page.oldImagePath.get).toFile)
+      val newImg = ImageIO.read(dir.resolve(page.newImagePath.get).toFile)
+
+      val oldArea = oldImg.getWidth.toLong * oldImg.getHeight.toLong
+      val newArea = newImg.getWidth.toLong * newImg.getHeight.toLong
+      val overlapW = math.min(oldImg.getWidth, newImg.getWidth)
+      val overlapH = math.min(oldImg.getHeight, newImg.getHeight)
+      val overlapArea = overlapW.toLong * overlapH.toLong
+      val unionArea = oldArea + newArea - overlapArea
+      val expectedDiff = (oldArea - overlapArea) + (newArea - overlapArea) // only size mismatch; overlap is identical
+      val expectedRatio = expectedDiff.toDouble / unionArea.toDouble
+
+      assert(vd.pixelDifferenceRatio == expectedRatio)
+      assert(vd.differenceCount == expectedDiff.toInt)
+    }
+
+    it("uses union area (not bounding rectangle) for ratio when one page is wider and the other is taller") {
+      val dir = Files.createTempDirectory("diff_size_mismatch_union_area")
+      val pdfWide = createSizedPdf(dir.resolve("wide.pdf"), widthPts = 300f, heightPts = 200f, background = Color.WHITE)
+      val pdfTall = createSizedPdf(dir.resolve("tall.pdf"), widthPts = 200f, heightPts = 300f, background = Color.WHITE)
+
+      val config = Config(
+        oldFile = pdfWide, newFile = pdfTall, outputDir = dir, dpi = 72, thresholdPixel = 0.0, // force image generation so we can read sizes
+      )
+
+      val result = compareAndExtract(config)
+      val page = result.pageDiffs.head
+      val vd = page.visualDiff.getOrElse(fail("visualDiff should exist"))
+
+      val oldImg = ImageIO.read(dir.resolve(page.oldImagePath.get).toFile)
+      val newImg = ImageIO.read(dir.resolve(page.newImagePath.get).toFile)
+
+      val oldArea = oldImg.getWidth.toLong * oldImg.getHeight.toLong
+      val newArea = newImg.getWidth.toLong * newImg.getHeight.toLong
+      val overlapW = math.min(oldImg.getWidth, newImg.getWidth)
+      val overlapH = math.min(oldImg.getHeight, newImg.getHeight)
+      val overlapArea = overlapW.toLong * overlapH.toLong
+      val unionArea = oldArea + newArea - overlapArea
+      val expectedDiff = (oldArea - overlapArea) + (newArea - overlapArea)
+      val expectedRatio = expectedDiff.toDouble / unionArea.toDouble
+
+      assert(vd.pixelDifferenceRatio == expectedRatio)
+
+      // With 300x200 vs 200x300 at 72dpi, expectedRatio should be 0.5.
+      assert(vd.pixelDifferenceRatio == 0.5)
+    }
+
+    it("generates diff image covering max width/height when page sizes differ") {
+      val dir = Files.createTempDirectory("diff_size_mismatch_image_dims")
+      val pdfSmall =
+        createSizedPdf(dir.resolve("small.pdf"), widthPts = 200f, heightPts = 200f, background = Color.WHITE)
+      val pdfBig = createSizedPdf(dir.resolve("big.pdf"), widthPts = 300f, heightPts = 250f, background = Color.WHITE)
+
+      val config = Config(
+        oldFile = pdfSmall, newFile = pdfBig, outputDir = dir, dpi = 72, thresholdPixel = 0.0,
+      )
+
+      val result = compareAndExtract(config)
+      val page = result.pageDiffs.head
+
+      val oldImg = ImageIO.read(dir.resolve(page.oldImagePath.get).toFile)
+      val newImg = ImageIO.read(dir.resolve(page.newImagePath.get).toFile)
+      val diffImg = ImageIO.read(dir.resolve(page.diffImagePath.get).toFile)
+
+      val expectedW = math.max(oldImg.getWidth, newImg.getWidth)
+      val expectedH = math.max(oldImg.getHeight, newImg.getHeight)
+
+      assert(diffImg.getWidth == expectedW)
+      assert(diffImg.getHeight == expectedH)
     }
   }
 
