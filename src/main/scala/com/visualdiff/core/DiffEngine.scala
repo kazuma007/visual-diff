@@ -525,7 +525,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * Type3 fonts use custom rendering procedures and may render differently.
     */
   private def isType3OrOutlined(font: PDFont): Boolean =
-    font.isInstanceOf[PDType3Font] || font.getName.toLowerCase.contains("outline")
+    font.isInstanceOf[PDType3Font] ||
+      Option(font.getName).exists(_.toLowerCase.contains("outline"))
 
   /** Extracts all text elements from a page with their positions and fonts.
     *
