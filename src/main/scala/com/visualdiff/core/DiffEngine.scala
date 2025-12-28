@@ -207,7 +207,7 @@ final class DiffEngine(config: Config) extends LazyLogging:
           newImagePath = newImagePath,
           diffImagePath = diffImagePath,
           colorImagePath = colorImagePath,
-          suppressedDiffs = infoNotice,
+          infoNotice = infoNotice,
           hasDifferences = visualDiff.exists(_.differenceCount > 0) ||
             colorDiffs.nonEmpty ||
             textDiffs.nonEmpty ||
@@ -269,11 +269,11 @@ final class DiffEngine(config: Config) extends LazyLogging:
       visualDiff: Option[VisualDiff],
       colorDiffs: Seq[ColorDiff],
       layoutDiffs: Seq[LayoutDiff],
-  ): Option[SuppressedDiffs] =
+  ): Option[InfoNotice] =
     val hasVisualDiff = visualDiff.exists(_.differenceCount > 0)
     if fontDiffs.nonEmpty && (hasVisualDiff || colorDiffs.nonEmpty || layoutDiffs.nonEmpty) then
       Some(
-        SuppressedDiffs(
+        InfoNotice(
           suppressedVisualDiff = None, // Not suppressing, just informing
           reason = "Font differences detected",
         ),

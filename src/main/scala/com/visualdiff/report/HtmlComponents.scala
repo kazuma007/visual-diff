@@ -142,7 +142,7 @@ object HtmlComponents:
         h2(s"Page ${pd.pageNumber}"),
       ),
       renderPageExistenceWarning(pd),
-      renderCascadingNotice(pd.suppressedDiffs),
+      renderCascadingNotice(pd.infoNotice),
       renderFontCategory(pd.fontDiffs),
       renderVisualCategory(pd.visualDiff, pd.oldImagePath, pd.newImagePath, pd.diffImagePath),
       renderTextCategory(pd.textDiffs),
@@ -437,7 +437,7 @@ object HtmlComponents:
         ),
       )
 
-  private def renderCascadingNotice(suppressed: Option[SuppressedDiffs]): Frag =
+  private def renderCascadingNotice(suppressed: Option[InfoNotice]): Frag =
     suppressed match
       case Some(s) if s.reason.nonEmpty =>
         div(cls := "cascading-notice")(

@@ -328,7 +328,7 @@ class ReporterSpec extends AnyFunSpec {
     val pageDiff = PageDiff(
       pageNumber = 1, visualDiff = Some(visualDiff), colorDiffs = Seq(colorDiff), textDiffs = Seq(textDiff),
       layoutDiffs = Seq(layoutDiff), fontDiffs = Seq(fontDiff), oldImagePath = None, newImagePath = None,
-      diffImagePath = None, colorImagePath = None, suppressedDiffs = None, hasDifferences = true,
+      diffImagePath = None, colorImagePath = None, infoNotice = None, hasDifferences = true,
     )
 
     val summary = DiffSummary(

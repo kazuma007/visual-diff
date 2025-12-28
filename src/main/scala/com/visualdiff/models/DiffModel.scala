@@ -92,16 +92,16 @@ object FontDiff:
 
   given ReadWriter[FontDiff] = macroRW
 
-final case class SuppressedDiffs(
+final case class InfoNotice(
     suppressedVisualDiff: Option[VisualDiff] = None,
     suppressedColorDiffCount: Int = 0,
     suppressedLayoutDiffCount: Int = 0,
     reason: String = "",
 )
 
-object SuppressedDiffs:
+object InfoNotice:
 
-  given ReadWriter[SuppressedDiffs] = macroRW
+  given ReadWriter[InfoNotice] = macroRW
 
 final case class PageDiff(
     pageNumber: Int,
@@ -114,7 +114,7 @@ final case class PageDiff(
     newImagePath: Option[String] = None,
     diffImagePath: Option[String] = None,
     colorImagePath: Option[String] = None,
-    suppressedDiffs: Option[SuppressedDiffs] = None,
+    infoNotice: Option[InfoNotice] = None,
     existsInOld: Boolean = true,
     existsInNew: Boolean = true,
     hasDifferences: Boolean = true,
