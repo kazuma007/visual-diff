@@ -79,6 +79,9 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
   private val WhiteRgb: Int = Color.WHITE.getRGB
 
+  // Sample every 10th pixel to balance detection accuracy with performance/memory
+  private val ColorSamplingRate = 10
+
   /** Compares two PDF documents page-by-page and returns comprehensive diff results.
     * Returns Either with error details or successful DiffResult.
     */
@@ -328,9 +331,6 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
       val colorDiffs = ListBuffer.empty[ColorDiff]
 
-      // Sample every 10th pixel to balance detection accuracy with performance/memory
-      val samplingRate = 10
-
       var y = 0
       while y < height do
         val rowBase = y * width
@@ -346,8 +346,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
             val distance = calculateColorDistance(oldColor, newColor)
             if distance > config.thresholdColor then colorDiffs += ColorDiff(x, y, oldColor, newColor, distance)
 
-          x += samplingRate
-        y += samplingRate
+          x += ColorSamplingRate
+        y += ColorSamplingRate
 
       // Return only top 200 most significant color differences to limit JSON size
       colorDiffs.sortBy(-_.distance).take(200).toSeq
@@ -524,7 +524,8 @@ final class DiffEngine(config: Config) extends LazyLogging:
     * Type3 fonts use custom rendering procedures and may render differently.
     */
   private def isType3OrOutlined(font: PDFont): Boolean =
-    font.isInstanceOf[PDType3Font] || font.getName.toLowerCase.contains("outline")
+    font.isInstanceOf[PDType3Font] ||
+      Option(font.getName).exists(_.toLowerCase.contains("outline"))
 
   /** Extracts all text elements from a page with their positions and fonts.
     *
