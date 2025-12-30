@@ -331,7 +331,6 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
       val colorDiffs = ListBuffer.empty[ColorDiff]
 
-
       var y = 0
       while y < height do
         val rowBase = y * width
