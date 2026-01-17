@@ -1,9 +1,6 @@
 package com.visualdiff.models
 
-/** Supported image formats that can be converted to PDF for comparison.
-  *
-  * PDFBox's PDImageXObject.createFromFile supports these formats natively.
-  */
+/** Supported image formats that can be converted to PDF for comparison. */
 enum ImageFormat(val extensions: Seq[String], val displayName: String):
 
   case JPEG extends ImageFormat(Seq(".jpg", ".jpeg"), "JPG/JPEG")
