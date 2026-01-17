@@ -20,7 +20,7 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDFont
 import org.apache.pdfbox.pdmodel.font.PDType3Font
-import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory
 import org.apache.pdfbox.rendering.ImageType
 import org.apache.pdfbox.rendering.PDFRenderer
 import org.apache.pdfbox.text.PDFTextStripper
@@ -131,7 +131,7 @@ final class DiffEngine(config: Config) extends LazyLogging:
           case None =>
             Left(DiffEngineError.ImageReadError(imagePath, new IllegalArgumentException("Unsupported image format")))
         }
-      doc <- createPdfFromImage(bufferedImage, imageFile, imagePath)
+      doc <- createPdfFromImage(bufferedImage, imagePath)
     yield doc
 
     result.left.map { error =>
@@ -141,10 +141,10 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
   /** Creates a PDF document from a BufferedImage.
     * Helper method to break down convertImageToPdf complexity.
+    * Uses the already-decoded BufferedImage to avoid duplicate I/O and decoding.
     */
   private def createPdfFromImage(
       bufferedImage: BufferedImage,
-      imageFile: java.io.File,
       imagePath: String,
   ): Either[DiffEngineError, PDDocument] = {
     Try {
@@ -153,7 +153,10 @@ final class DiffEngine(config: Config) extends LazyLogging:
       val height = bufferedImage.getHeight
       val page = new PDPage(new PDRectangle(width.toFloat, height.toFloat))
       doc.addPage(page)
-      val pdImage = PDImageXObject.createFromFile(imageFile.getAbsolutePath, doc)
+
+      // Use LosslessFactory to embed the already-decoded BufferedImage
+      // This avoids re-reading and re-decoding the file, ensuring consistency
+      val pdImage = LosslessFactory.createFromImage(doc, bufferedImage)
 
       Using.resource(new PDPageContentStream(doc, page)) { contentStream =>
         contentStream.drawImage(pdImage, 0, 0, width.toFloat, height.toFloat)
