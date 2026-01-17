@@ -1,7 +1,6 @@
 package com.visualdiff.models
 
-/** Supported image formats that can be converted to PDF for comparison.
-  */
+/** Supported image formats that can be converted to PDF for comparison. */
 enum ImageFormat(val extensions: Seq[String], val displayName: String):
 
   case JPEG extends ImageFormat(Seq(".jpg", ".jpeg"), "JPG/JPEG")
