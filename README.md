@@ -7,8 +7,8 @@
 - **Visual Diff**: Renders PDFs to images and performs a pixel-by-pixel comparison, highlighting any visual changes
 - **Color Diff**: Detects color changes in text and graphics using RGB color distance analysis, with configurable
   sensitivity
-- **Text Diff**: Extracts all text content with coordinates to identify added or removed text (PDF only)
-- **Layout Diff**: Detects when text or elements have shifted beyond a configurable threshold (PDF only)
+- **Text Diff**: Extracts text with coordinates and aggregates glyphs into word-level tokens to identify added or removed text (PDF only)
+- **Layout Diff**: Extracts text with coordinates and aggregates glyphs into word-level tokens to identify added or removed text (PDF only)
 - **Font Diff**: Identifies font substitutions, missing fonts, and embedding status changes that can affect document
   appearance (PDF only)
 - **Reports**: Produces multiple output files for every comparison:

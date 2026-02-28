@@ -201,8 +201,8 @@ class DiffEngineSpec extends AnyFunSpec {
       assert(result.hasDifferences)
       assert(result.summary.textDiffCount == 3)
       val diffs = result.pageDiffs.flatMap(_.textDiffs)
-      assert(diffs.filter(_.diffType == Added).flatMap(_.newText) == Seq("A"))
-      assert(diffs.filter(_.diffType == Removed).flatMap(_.oldText) == Seq(" ", "C"))
+      assert(diffs.filter(_.diffType == Added).flatMap(_.newText) == Seq("TestAB"))
+      assert(diffs.filter(_.diffType == Removed).flatMap(_.oldText) == Seq("TestB", "C"))
     }
 
     it("handles special characters and long text") {
@@ -323,7 +323,7 @@ class DiffEngineSpec extends AnyFunSpec {
         case None =>
           fail("Expected layout diffs but found none")
       }
-      assert(layoutDiffs.map(_.text) == Seq("M", "o", "v", "i", "n", "g", "T", "e", "x", "t"))
+      assert(layoutDiffs.map(_.text) == Seq("Moving", "Text"))
     }
 
     it("ignores small shifts") {

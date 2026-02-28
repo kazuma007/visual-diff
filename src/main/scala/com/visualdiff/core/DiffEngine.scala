@@ -12,6 +12,7 @@ import scala.util.Try
 import scala.util.Using
 
 import com.typesafe.scalalogging.LazyLogging
+import com.visualdiff.helper.GlyphsHelper
 import com.visualdiff.models._
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
@@ -23,8 +24,6 @@ import org.apache.pdfbox.pdmodel.font.PDType3Font
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory
 import org.apache.pdfbox.rendering.ImageType
 import org.apache.pdfbox.rendering.PDFRenderer
-import org.apache.pdfbox.text.PDFTextStripper
-import org.apache.pdfbox.text.TextPosition
 
 /** Core engine for comparing two PDF documents and detecting differences.
   *
@@ -429,69 +428,82 @@ final class DiffEngine(config: Config) extends LazyLogging:
 
     (textDiffs, layoutDiffs)
 
-  /** Computes matches between old and new text elements using greedy matching.
-    * Returns pairs of (oldIndex, newIndex) for matching elements.
-    */
-  private def computeTextMatches(
-      oldTexts: Seq[TextElement],
-      newTexts: Seq[TextElement],
-  ): Seq[(Int, Int)] =
-    val (matches, _) = oldTexts.zipWithIndex
-      .foldLeft((Vector.empty[(Int, Int)], Set.empty[Int])) { case ((matches, usedIndices), (oldElem, oldIdx)) =>
-        newTexts.zipWithIndex.find { case (newElem, newIdx) =>
-          newElem.text == oldElem.text && !usedIndices.contains(newIdx)
-        }.map { case (_, newIdx) => (matches :+ (oldIdx, newIdx), usedIndices + newIdx) }
-          .getOrElse((matches, usedIndices))
-      }
-    matches
-
-  /** Detects font differences including substitutions, additions, and removals.
+  /** Matching old/new tokens with normalized text + proximity score.
     *
-    * Checks three types of changes:
-    * 1. Font substitutions: Same text rendered with different fonts
-    * 2. Added fonts: Fonts present in new but not old
-    * 3. Removed fonts: Fonts present in old but not new
+    * This reduces mismatches when the same token appears multiple times on a page.
     */
+  private def computeTextMatches(oldTexts: Seq[TextElement], newTexts: Seq[TextElement]): Seq[(Int, Int)] =
+    if oldTexts.isEmpty || newTexts.isEmpty then Seq.empty
+    else
+      val indexedNew = newTexts.zipWithIndex.toVector
+      val newByText: Map[String, Vector[(TextElement, Int)]] =
+        indexedNew.groupBy { case (e, _) => GlyphsHelper.normalizeText(e.text) }.view
+          .mapValues(_.toVector)
+          .toMap
+
+      val indexPenaltyWeight = 5.0
+
+      def score(oldIdx: Int, oldElem: TextElement, newIdx: Int, newElem: TextElement): Double =
+        val dist = GlyphsHelper.bboxCenterDistance(oldElem.bbox, newElem.bbox)
+        val idxPenalty = math.abs(newIdx - oldIdx).toDouble * indexPenaltyWeight
+        dist + idxPenalty
+
+      val (matches, _) =
+        oldTexts.zipWithIndex.foldLeft((Vector.empty[(Int, Int)], Set.empty[Int])) {
+          case ((acc, usedNew), (oldElem, oldIdx)) =>
+            val key = GlyphsHelper.normalizeText(oldElem.text)
+            if key.isEmpty then (acc, usedNew)
+            else
+              val candidates =
+                newByText.getOrElse(key, Vector.empty).filterNot { case (_, newIdx) => usedNew.contains(newIdx) }
+
+              if candidates.isEmpty then (acc, usedNew)
+              else
+                val best = candidates.minBy { case (newElem, newIdx) => score(oldIdx, oldElem, newIdx, newElem) }
+                val chosenIdx = best._2
+                (acc :+ (oldIdx, chosenIdx), usedNew + chosenIdx)
+        }
+
+      matches
+
+  /** Extract text elements from a page.
+    *
+    * Delegates to GlyphsHelper (glyph -> line -> word token).
+    */
+  private def extractTextElements(doc: PDDocument, pageNum: Int): Seq[TextElement] =
+    GlyphsHelper.extractWordElements(doc, pageNum)
+
+  private def calculateDisplacement(a: BoundingBox, b: BoundingBox): Double =
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    math.sqrt(dx * dx + dy * dy)
+
+  /** Detects font differences including substitutions, additions, and removals. */
   private def compareFonts(oldDoc: PDDocument, newDoc: PDDocument, pageNum: Int): Seq[FontDiff] =
     val oldFonts = extractFontsFromPage(oldDoc, pageNum)
     val newFonts = extractFontsFromPage(newDoc, pageNum)
     val oldTexts = extractTextElements(oldDoc, pageNum)
     val newTexts = extractTextElements(newDoc, pageNum)
 
-    // Check for font substitutions: same text, different font
     val substitutionDiffs = oldTexts.flatMap { oldElem =>
-      newTexts.find(_.text == oldElem.text).collect {
+      newTexts.find(e => GlyphsHelper.normalizeText(e.text) == GlyphsHelper.normalizeText(oldElem.text)).collect {
         case newElem if oldElem.fontName != newElem.fontName =>
           FontDiff(DiffType.Changed, oldFonts.get(oldElem.fontName), newFonts.get(newElem.fontName), Some(oldElem.text))
       }
     }
 
-    // Check for newly added fonts
     val oldFontNames = oldFonts.keySet
     val newFontNames = newFonts.keySet
 
-    val addedDiffs = newFontNames.diff(oldFontNames).flatMap { fontName =>
-      newFonts.get(fontName).map { fontInfo =>
-        FontDiff(DiffType.Added, None, Some(fontInfo), None)
-      }
-    }
-
-    // Check for missing fonts (removed from old to new)
-    val removedDiffs = oldFontNames.diff(newFontNames).flatMap { fontName =>
-      oldFonts.get(fontName).map { fontInfo =>
-        FontDiff(DiffType.Removed, Some(fontInfo), None, None)
-      }
-    }
+    val addedDiffs = newFontNames
+      .diff(oldFontNames)
+      .flatMap(fontName => newFonts.get(fontName).map(fi => FontDiff(DiffType.Added, None, Some(fi), None)))
+    val removedDiffs = oldFontNames
+      .diff(newFontNames)
+      .flatMap(fontName => oldFonts.get(fontName).map(fi => FontDiff(DiffType.Removed, Some(fi), None, None)))
 
     substitutionDiffs ++ addedDiffs ++ removedDiffs
 
-  /** Extracts font metadata from a PDF page's resources.
-    *
-    * Returns a map of font name to FontInfo including:
-    * - Font name
-    * - Embedding status (embedded fonts travel with the PDF)
-    * - Outline status (Type3 or outline fonts)
-    */
   private def extractFontsFromPage(doc: PDDocument, pageNum: Int): Map[String, FontInfo] =
     if pageNum >= doc.getNumberOfPages then Map.empty
     else
@@ -506,7 +518,6 @@ final class DiffEngine(config: Config) extends LazyLogging:
         }.toMap
       }.getOrElse(Map.empty)
 
-  /** Extracts information from a single font, returning Either for error handling. */
   private def extractSingleFont(
       font: PDFont,
       fontName: org.apache.pdfbox.cos.COSName,
@@ -519,68 +530,11 @@ final class DiffEngine(config: Config) extends LazyLogging:
         val isOutlined = isType3OrOutlined(font)
         name -> FontInfo(name, isEmbedded, isOutlined)
       }.getOrElse(throw new NoSuchElementException("Font is null"))
-    }.toEither.left.map { e =>
-      DiffEngineError.FontExtractionError(fontName.getName, pageNum + 1, e)
-    }
+    }.toEither.left.map(e => DiffEngineError.FontExtractionError(fontName.getName, pageNum + 1, e))
 
-  /** Checks if a font is Type3 (bitmap) or explicitly marked as outline.
-    * Type3 fonts use custom rendering procedures and may render differently.
-    */
   private def isType3OrOutlined(font: PDFont): Boolean =
-    font.isInstanceOf[PDType3Font] ||
-      Option(font.getName).exists(_.toLowerCase.contains("outline"))
+    font.isInstanceOf[PDType3Font] || Option(font.getName).exists(_.toLowerCase.contains("outline"))
 
-  /** Extracts all text elements from a page with their positions and fonts.
-    *
-    * Uses PDFBox's PDFTextStripper with custom TextPosition processing to capture:
-    * - Text content
-    * - Bounding box coordinates
-    * - Font information
-    */
-  private def extractTextElements(doc: PDDocument, pageNum: Int): Seq[TextElement] =
-    Try {
-      val buf = ListBuffer.empty[TextElement]
-
-      // Custom PDFTextStripper that captures position data for each character
-      val stripper = new PDFTextStripper() {
-        override def processTextPosition(text: TextPosition): Unit =
-          val bbox = BoundingBox(
-            text.getXDirAdj.toDouble,
-            text.getYDirAdj.toDouble,
-            text.getWidthDirAdj.toDouble,
-            text.getHeightDir.toDouble,
-          )
-
-          val fontName = Option(text.getFont).flatMap(f => Option(f.getName)).getOrElse("Unknown")
-          buf += TextElement(text.getUnicode, bbox, pageNum + 1, fontName)
-      }
-
-      stripper.setStartPage(pageNum + 1)
-      stripper.setEndPage(pageNum + 1)
-      stripper.getText(doc)
-
-      buf.toSeq
-    }.recover { case e: Exception =>
-      logger.error(s"Failed to extract text elements from page ${pageNum + 1}", e)
-      Seq.empty[TextElement]
-    }.getOrElse(Seq.empty)
-
-  /** Calculates Euclidean distance between two bounding box positions.
-    * Uses top-left corner coordinates (x, y) to determine displacement.
-    */
-  private def calculateDisplacement(a: BoundingBox, b: BoundingBox): Double =
-    val dx = b.x - a.x
-    val dy = b.y - a.y
-    math.sqrt(dx * dx + dy * dy)
-
-  /** Generates separate old, new, and diff images for visual comparison.
-    *
-    * Enhancement:
-    * - Diff image now covers the bounding rectangle (max width/height).
-    * - Any non-overlap region (where one page has pixels and the other does not) is marked as a difference.
-    *
-    * Returns a tuple of (oldImagePath, newImagePath, diffImagePath)
-    */
   private def generateVisualDiffImages(
       renderImages: RenderImages,
       pageNum: Int,
