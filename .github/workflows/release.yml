@@ -39,7 +39,7 @@ jobs:
           echo "name=$(basename $JAR_PATH)" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ steps.jar.outputs.path }}
           generate_release_notes: true
